@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto Reverser - 浏览器自动逆向工具</title>
+    <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+    <div id="app">
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">🔍</span>
+                <span class="logo-text">Auto Reverser</span>
+            </div>
+            <div class="header-actions">
+                <button id="btn-export" class="btn btn-secondary" disabled>导出报告</button>
+                <button id="btn-settings" class="btn btn-icon">⚙️</button>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <section class="url-input-section">
+                <div class="input-group">
+                    <input type="text" id="url-input" class="url-input" 
+                           placeholder="输入要分析的网站URL，例如: https://weibo.com/..." 
+                           autocomplete="off">
+                    <button id="btn-start" class="btn btn-primary">
+                        <span class="btn-text">开始分析</span>
+                        <span class="btn-loading hidden">分析中...</span>
+                    </button>
+                    <button id="btn-stop" class="btn btn-danger hidden">停止</button>
+                </div>
+                <div class="input-options">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="opt-auto-scroll" checked>
+                        自动滚动加载更多
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="opt-intercept-xhr" checked>
+                        拦截XHR/Fetch请求
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="opt-analyze-encryption" checked>
+                        自动分析加密参数
+                    </label>
+                </div>
+            </section>
+
+            <section class="analysis-section">
+                <div class="panel-container">
+                    <div class="panel requests-panel">
+                        <div class="panel-header">
+                            <h3>请求列表</h3>
+                            <div class="panel-filters">
+                                <button class="filter-btn active" data-filter="all">全部</button>
+                                <button class="filter-btn" data-filter="api">API</button>
+                                <button class="filter-btn" data-filter="xhr">XHR</button>
+                                <button class="filter-btn" data-filter="encrypted">加密参数</button>
+                            </div>
+                        </div>
+                        <div class="panel-content">
+                            <div id="requests-list" class="requests-list">
+                                <div class="empty-state">
+                                    <p>输入URL并点击"开始分析"来捕获网络请求</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="panel detail-panel">
+                        <div class="panel-header">
+                            <h3>请求详情</h3>
+                            <div class="panel-actions">
+                                <button id="btn-copy-request" class="btn btn-small" disabled>复制</button>
+                                <button id="btn-replay-request" class="btn btn-small" disabled>重放</button>
+                            </div>
+                        </div>
+                        <div class="panel-content">
+                            <div id="request-detail" class="request-detail">
+                                <div class="empty-state">
+                                    <p>选择一个请求查看详情</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="encryption-section">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3>加密参数分析</h3>
+                        <div class="panel-actions">
+                            <button id="btn-export-python" class="btn btn-small" disabled>导出Python</button>
+                            <button id="btn-export-nodejs" class="btn btn-small" disabled>导出Node.js</button>
+                        </div>
+                    </div>
+                    <div class="panel-content">
+                        <div id="encryption-results" class="encryption-results">
+                            <div class="empty-state">
+                                <p>分析完成后，加密参数将显示在这里</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <div class="status-bar">
+                <span id="status-text" class="status-text">就绪</span>
+                <span id="status-stats" class="status-stats"></span>
+            </div>
+        </footer>
+    </div>
+
+    <div id="modal-container" class="modal-container hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modal-title">标题</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-content" id="modal-content">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary modal-cancel">取消</button>
+                <button class="btn btn-primary modal-confirm">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="scripts/renderer.js"></script>
+</body>
+</html>
