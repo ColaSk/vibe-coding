@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,6 +15,10 @@
             </div>
             <div class="header-actions">
                 <button id="btn-export" class="btn btn-secondary" disabled>导出报告</button>
+                <button id="btn-theme" class="btn-theme" title="切换白天/黑夜模式">
+                    <span class="theme-icon">🌙</span>
+                    <span class="theme-label">深色</span>
+                </button>
                 <button id="btn-settings" class="btn btn-icon">⚙️</button>
             </div>
         </header>
@@ -33,10 +37,6 @@
                 </div>
                 <div class="input-options">
                     <label class="checkbox-label">
-                        <input type="checkbox" id="opt-auto-scroll" checked>
-                        自动滚动加载更多
-                    </label>
-                    <label class="checkbox-label">
                         <input type="checkbox" id="opt-intercept-xhr" checked>
                         拦截XHR/Fetch请求
                     </label>
@@ -47,33 +47,72 @@
                 </div>
             </section>
 
+            <section class="browser-section" id="browser-section">
+                <div class="browser-toolbar">
+                    <div class="browser-nav-buttons">
+                        <button id="btn-back" class="btn-nav" disabled>◀</button>
+                        <button id="btn-forward" class="btn-nav" disabled>▶</button>
+                        <button id="btn-refresh" class="btn-nav">🔄</button>
+                    </div>
+                    <div class="browser-url-bar">
+                        <span id="browser-current-url">about:blank</span>
+                    </div>
+                    <div class="browser-actions">
+                        <button id="btn-devtools" class="btn btn-small">开发者工具</button>
+                        <button id="btn-toggle-browser" class="btn btn-small btn-icon-small" title="折叠/展开浏览器">▼</button>
+                    </div>
+                </div>
+                <div id="browser-container" class="browser-container">
+                    <div class="browser-placeholder">
+                        <p>输入URL并点击"开始分析"来加载网页</p>
+                    </div>
+                </div>
+            </section>
+
+            <div id="browser-resize-handle" class="browser-resize-handle">
+                <div class="resize-handle-bar"></div>
+            </div>
+
             <section class="analysis-section">
-                <div class="panel-container">
-                    <div class="panel requests-panel">
+                <div class="panel-container" id="panel-container">
+                    <div class="panel requests-panel" id="requests-panel">
                         <div class="panel-header">
-                            <h3>请求列表</h3>
-                            <div class="panel-filters">
-                                <button class="filter-btn active" data-filter="all">全部</button>
-                                <button class="filter-btn" data-filter="api">API</button>
-                                <button class="filter-btn" data-filter="xhr">XHR</button>
-                                <button class="filter-btn" data-filter="encrypted">加密参数</button>
+                            <div class="panel-header-row">
+                                <h3>请求列表 <span id="request-count" class="count-badge">0</span></h3>
+                                <div class="panel-filters">
+                                    <button class="filter-btn active" data-filter="all">全部</button>
+                                    <button class="filter-btn" data-filter="api">API</button>
+                                    <button class="filter-btn" data-filter="xhr">XHR</button>
+                                    <button class="filter-btn" data-filter="encrypted">加密</button>
+                                </div>
+                            </div>
+                            <div class="panel-search">
+                                <input type="text" id="request-search" class="search-input" placeholder="搜索 URL...">
                             </div>
                         </div>
                         <div class="panel-content">
                             <div id="requests-list" class="requests-list">
                                 <div class="empty-state">
-                                    <p>输入URL并点击"开始分析"来捕获网络请求</p>
+                                    <p>等待捕获网络请求...</p>
                                 </div>
                             </div>
                         </div>
                     </div>
 
+                    <div id="panels-resize-handle" class="panels-resize-handle">
+                        <div class="panels-resize-bar"></div>
+                    </div>
+
                     <div class="panel detail-panel">
                         <div class="panel-header">
-                            <h3>请求详情</h3>
-                            <div class="panel-actions">
-                                <button id="btn-copy-request" class="btn btn-small" disabled>复制</button>
-                                <button id="btn-replay-request" class="btn btn-small" disabled>重放</button>
+                            <div class="panel-header-row">
+                                <h3>请求详情</h3>
+                                <div class="panel-filters">
+                                    <button id="btn-copy-request" class="filter-btn" disabled>复制</button>
+                                    <button id="btn-replay-request" class="filter-btn" disabled>重放</button>
+                                </div>
+                            </div>
+                            <div class="panel-header-row detail-tabs-row hidden" id="detail-tabs-container">
                             </div>
                         </div>
                         <div class="panel-content">
@@ -81,25 +120,6 @@
                                 <div class="empty-state">
                                     <p>选择一个请求查看详情</p>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <section class="encryption-section">
-                <div class="panel">
-                    <div class="panel-header">
-                        <h3>加密参数分析</h3>
-                        <div class="panel-actions">
-                            <button id="btn-export-python" class="btn btn-small" disabled>导出Python</button>
-                            <button id="btn-export-nodejs" class="btn btn-small" disabled>导出Node.js</button>
-                        </div>
-                    </div>
-                    <div class="panel-content">
-                        <div id="encryption-results" class="encryption-results">
-                            <div class="empty-state">
-                                <p>分析完成后，加密参数将显示在这里</p>
                             </div>
                         </div>
                     </div>

@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const { session } = require('electron');
 
 class RequestInterceptor {
     constructor() {
@@ -6,6 +7,7 @@ class RequestInterceptor {
         this.responses = new Map();
         this.listeners = new Set();
         this.page = null;
+        this.browserView = null;
     }
 
     attach(page) {
@@ -24,6 +26,96 @@ class RequestInterceptor {
         page.on('requestfailed', (request) => {
             this.handleRequestFailed(request);
         });
+    }
+
+    attachToBrowserView(browserView) {
+        this.browserView = browserView;
+        this.clear();
+
+        const webContents = browserView.webContents;
+
+        webContents.on('before-input-event', (event, input) => {
+            if (input.key === 'F5' || (input.control && input.key === 'r')) {
+                webContents.reload();
+            }
+        });
+
+        webContents.session.webRequest.onBeforeRequest(
+            { urls: ['*://*/*'] },
+            (details, callback) => {
+                this.handleWebRequest(details);
+                callback({});
+            }
+        );
+
+        webContents.session.webRequest.onCompleted(
+            { urls: ['*://*/*'] },
+            (details) => {
+                this.handleWebResponse(details);
+            }
+        );
+
+        webContents.session.webRequest.onErrorOccurred(
+            { urls: ['*://*/*'] },
+            (details) => {
+                this.handleWebError(details);
+            }
+        );
+    }
+
+    handleWebRequest(details) {
+        const requestId = details.id || uuidv4();
+        const requestData = {
+            id: requestId,
+            url: details.url,
+            method: details.method,
+            headers: details.requestHeaders || {},
+            postData: details.uploadData ? details.uploadData.map(d => d.bytes?.toString()).join('') : null,
+            resourceType: details.resourceType,
+            timestamp: Date.now(),
+            status: 'pending'
+        };
+
+        this.requests.set(requestId, requestData);
+        this.notifyListeners('request', requestData);
+    }
+
+    handleWebResponse(details) {
+        const requestId = details.id;
+        if (!requestId) return;
+
+        const responseData = {
+            id: requestId,
+            url: details.url,
+            status: details.statusCode,
+            statusText: details.statusLine,
+            headers: details.responseHeaders || {},
+            timestamp: Date.now()
+        };
+
+        this.responses.set(requestId, responseData);
+
+        const originalRequest = this.requests.get(requestId);
+        if (originalRequest) {
+            originalRequest.status = 'completed';
+            originalRequest.response = responseData;
+        }
+
+        this.notifyListeners('response', {
+            request: originalRequest,
+            response: responseData
+        });
+    }
+
+    handleWebError(details) {
+        const requestId = details.id;
+        if (!requestId) return;
+
+        const originalRequest = this.requests.get(requestId);
+        if (originalRequest) {
+            originalRequest.status = 'failed';
+            originalRequest.error = details.error || 'Unknown error';
+        }
     }
 
     handleRequest(request) {
@@ -170,6 +262,13 @@ class RequestInterceptor {
             this.page.removeAllListeners('response');
             this.page.removeAllListeners('requestfailed');
             this.page = null;
+        }
+        if (this.browserView) {
+            const webContents = this.browserView.webContents;
+            webContents.session.webRequest.onBeforeRequest(null);
+            webContents.session.webRequest.onCompleted(null);
+            webContents.session.webRequest.onErrorOccurred(null);
+            this.browserView = null;
         }
         this.clear();
     }

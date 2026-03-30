@@ -1,7 +1,7 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain } = require('electron');
 const path = require('path');
-const { BrowserController } = require('./browser');
 const { RequestInterceptor } = require('../core/interceptor');
+const { CDPInterceptor } = require('../core/cdp-interceptor');
 const { APIAnalyzer } = require('../core/analyzer');
 const { EncryptionAnalyzer } = require('../core/encryption');
 const { EncryptionCracker } = require('../core/cracker');
@@ -9,8 +9,9 @@ const Store = require('electron-store');
 
 const store = new Store();
 let mainWindow = null;
-let browserController = null;
+let browserView = null;
 let requestInterceptor = null;
+let cdpInterceptor = null;
 let apiAnalyzer = null;
 let encryptionAnalyzer = null;
 let encryptionCracker = null;
@@ -24,7 +25,8 @@ function createWindow() {
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,
-            webSecurity: false
+            webSecurity: false,
+            webviewTag: true
         },
         titleBarStyle: 'hiddenInset',
         backgroundColor: '#1a1a2e'
@@ -36,12 +38,94 @@ function createWindow() {
         mainWindow = null;
     });
 
-    mainWindow.webContents.openDevTools();
+    mainWindow.on('resize', () => {
+        if (browserView) {
+            updateBrowserViewBounds();
+        }
+    });
+
+}
+
+function createBrowserView() {
+    if (browserView) {
+        browserView.webContents.destroy();
+        browserView = null;
+    }
+
+    browserView = new BrowserView({
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            webSecurity: false,
+            preload: path.join(__dirname, '../preload/browser-preload.js')
+        }
+    });
+
+    mainWindow.setBrowserView(browserView);
+    updateBrowserViewBounds();
+
+    browserView.webContents.on('did-navigate', (event, url) => {
+        mainWindow.webContents.send('browser-url-changed', url);
+    });
+
+    browserView.webContents.on('did-navigate-in-page', (event, url) => {
+        mainWindow.webContents.send('browser-url-changed', url);
+    });
+
+    browserView.webContents.on('did-start-loading', () => {
+        mainWindow.webContents.send('browser-loading', true);
+    });
+
+    browserView.webContents.on('did-stop-loading', () => {
+        mainWindow.webContents.send('browser-loading', false);
+    });
+
+    browserView.webContents.on('new-window', (event, url) => {
+        event.preventDefault();
+        browserView.webContents.loadURL(url);
+    });
+
+    return browserView;
+}
+
+function updateBrowserViewBounds() {
+    if (!browserView || !mainWindow) return;
+
+    const contentBounds = mainWindow.getContentBounds();
+    
+    // 先设置一个默认边界
+    browserView.setBounds({
+        x: 0,
+        y: 0,
+        width: contentBounds.width,
+        height: 400
+    });
+    
+    // 然后获取精确位置
+    mainWindow.webContents.executeJavaScript(`
+        (function() {
+            const container = document.getElementById('browser-container');
+            if (!container) return null;
+            const rect = container.getBoundingClientRect();
+            return {
+                x: Math.round(rect.left),
+                y: Math.round(rect.top),
+                width: Math.round(rect.width),
+                height: Math.round(rect.height)
+            };
+        })()
+    `).then(bounds => {
+        if (bounds && bounds.width > 0 && bounds.height > 0) {
+            browserView.setBounds(bounds);
+        }
+    }).catch(err => {
+        console.error('Failed to get browser container bounds:', err);
+    });
 }
 
 function initializeModules() {
-    browserController = new BrowserController();
     requestInterceptor = new RequestInterceptor();
+    cdpInterceptor = new CDPInterceptor();
     apiAnalyzer = new APIAnalyzer();
     encryptionAnalyzer = new EncryptionAnalyzer();
     encryptionCracker = new EncryptionCracker();
@@ -67,11 +151,11 @@ function setupIPC() {
     });
 
     ipcMain.handle('get-requests', async () => {
-        return requestInterceptor.getAllRequests();
+        return cdpInterceptor.getAllRequests();
     });
 
     ipcMain.handle('analyze-api', async (event, requestId) => {
-        const request = requestInterceptor.getRequest(requestId);
+        const request = cdpInterceptor.getRequest(requestId);
         if (request) {
             return await apiAnalyzer.analyze(request);
         }
@@ -89,33 +173,75 @@ function setupIPC() {
     ipcMain.handle('export-script', async (event, type, data) => {
         return encryptionCracker.generateScript(type, data);
     });
+
+    ipcMain.handle('browser-navigate', async (event, url) => {
+        if (browserView) {
+            browserView.webContents.loadURL(url);
+        }
+    });
+
+    ipcMain.handle('browser-back', async () => {
+        if (browserView && browserView.webContents.canGoBack()) {
+            browserView.webContents.goBack();
+        }
+    });
+
+    ipcMain.handle('browser-forward', async () => {
+        if (browserView && browserView.webContents.canGoForward()) {
+            browserView.webContents.goForward();
+        }
+    });
+
+    ipcMain.handle('browser-refresh', async () => {
+        if (browserView) {
+            browserView.webContents.reload();
+        }
+    });
+
+    ipcMain.handle('browser-devtools', async () => {
+        if (browserView) {
+            browserView.webContents.openDevTools();
+        }
+    });
+
+    ipcMain.handle('show-browser', async () => {
+        if (browserView) {
+            updateBrowserViewBounds();
+        }
+    });
 }
 
 async function startAnalysis(url) {
-    const page = await browserController.launch(url);
-    
-    requestInterceptor.attach(page);
-    
-    await page.goto(url, { 
-        waitUntil: 'domcontentloaded',
-        timeout: 60000 
+    console.log('Starting analysis for:', url);
+
+    createBrowserView();
+    cdpInterceptor.attachToBrowserView(browserView);
+
+    // 实时将每条请求/响应推送到渲染进程，不等待页面加载完成
+    cdpInterceptor.addListener((type, data) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.webContents.send('request-captured', { type, data });
     });
-    
-    await browserController.autoScroll();
-    
-    const requests = requestInterceptor.getAllRequests();
-    const apiRequests = await apiAnalyzer.identifyAPIs(requests);
-    
-    return {
-        url: url,
-        requests: requests,
-        apiRequests: apiRequests
-    };
+
+    // 非阻塞导航：不 await，让用户可以在页面加载期间手动操作（过验证码等）
+    browserView.webContents.loadURL(url).catch(err => {
+        console.error('Navigation error:', err.message);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('browser-load-error', err.message);
+        }
+    });
+
+    // 立即返回，请求通过事件实时推送
+    return { url };
 }
 
 async function stopAnalysis() {
-    if (browserController) {
-        await browserController.close();
+    if (browserView) {
+        if (cdpInterceptor) {
+            cdpInterceptor.detach();
+        }
+        browserView.webContents.destroy();
+        browserView = null;
     }
     if (requestInterceptor) {
         requestInterceptor.clear();

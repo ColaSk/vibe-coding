@@ -1,1207 +1,475 @@
-# 谷歌浏览器自动逆向工具技术方案
+# Auto Reverser — 浏览器自动逆向工具技术文档
 
 ## 一、项目概述
 
 ### 1.1 项目目标
-开发一款桌面级自动化逆向分析工具，用于自动识别网站API接口、分析请求参数、破解加密参数，帮助安全研究人员和开发者快速理解网站的数据交互机制。
+开发一款桌面级网络请求捕获与逆向分析工具，通过内嵌可交互浏览器实时拦截所有网络请求，帮助安全研究人员和开发者快速理解目标网站的数据交互机制、识别 API 接口及加密参数。
 
-### 1.2 核心功能
-- **URL输入与页面加载**：支持用户输入任意网站URL，自动加载并渲染页面
-- **接口自动识别**：自动捕获并分析页面加载过程中的所有网络请求
-- **数据接口定位**：智能识别列表页数据来源接口
-- **参数分析**：解析请求参数结构，识别加密参数
-- **加密破解**：针对常见加密算法进行自动化破解
+### 1.2 已实现核心功能
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| URL 输入与页面加载 | ✅ | 内嵌 BrowserView，支持完整页面渲染 |
+| 实时网络请求捕获 | ✅ | 基于真实 CDP，含请求头、响应头、响应体 |
+| 请求列表实时展示 | ✅ | 防抖增量渲染，支持过滤与搜索 |
+| 请求详情五标签页 | ✅ | 概览 / 请求头 / 参数 / 响应头 / 响应体 |
+| 完整响应体获取 | ✅ | `Network.getResponseBody`，自动格式化 JSON |
+| 验证码人工介入 | ✅ | 非阻塞导航，捕获在停止前持续进行 |
+| 浏览器面板拖拽缩放 | ✅ | 上下拖拽调整高度，折叠/展开切换 |
+| 左右面板拖拽缩放 | ✅ | 拖动分隔条调整请求列表与详情宽度 |
+| 内嵌浏览器导航控制 | ✅ | 前进 / 后退 / 刷新 / 开发者工具 |
+| 请求数据一键复制 | ✅ | 复制完整请求 JSON 到剪贴板 |
+| 加密参数识别模块 | ⚠️ | 模块已实现，界面集成待完善 |
+| 导出报告 | ⚠️ | 按钮已占位，功能待实现 |
+| 请求重放 | ⚠️ | 按钮已占位，功能待实现 |
 
 ---
 
 ## 二、技术架构
 
-### 2.1 整体架构图
+### 2.1 整体架构
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      桌面应用层 (Electron)                    │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │  URL输入界面  │  │  结果展示界面 │  │  参数配置界面        │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                     桌面应用层（Electron）                        │
+│                                                                   │
+│  ┌─────────────────────────┐  ┌──────────────────────────────┐   │
+│  │     主进程 (Main)        │  │    渲染进程 (Renderer)        │   │
+│  │  src/main/index.js      │  │  src/renderer/               │   │
+│  │                         │  │    index.html                │   │
+│  │  · BrowserView 管理     │  │    scripts/renderer.js       │   │
+│  │  · IPC 处理             │  │    styles/main.css           │   │
+│  │  · 模块初始化           │  │                              │   │
+│  └──────────┬──────────────┘  └──────────────┬───────────────┘   │
+│             │    IPC (ipcMain / ipcRenderer)  │                   │
+│             └────────────────────────────────┘                   │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────┐     │
+│  │               内嵌浏览器（BrowserView）                   │     │
+│  │  · 独立渲染进程，与主界面叠加显示                          │     │
+│  │  · webContents.debugger 挂载 CDP                        │     │
+│  └─────────────────────────────────────────────────────────┘     │
+└─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      核心引擎层                              │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │              Chrome DevTools Protocol                │   │
-│  │  (Network、Page、Runtime、Debugger 协议)              │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                              │                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐   │
-│  │ 请求拦截引擎  │  │ JS执行引擎   │  │  加密分析引擎   │   │
-│  └──────────────┘  └──────────────┘  └────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      分析处理层                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐   │
-│  │ 接口分类器    │  │ 参数解析器   │  │  加密破解器     │   │
-│  └──────────────┘  └──────────────┘  └────────────────┘   │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐   │
-│  │ AST分析器    │  │ 混淆还原器   │  │  算法识别器     │   │
-│  └──────────────┘  └──────────────┘  └────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      数据存储层                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐   │
-│  │ SQLite数据库 │  │ 文件缓存     │  │  配置存储       │   │
-│  └──────────────┘  └──────────────┘  └────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                      核心引擎层                                    │
+│                                                                   │
+│  ┌───────────────────────┐   ┌──────────────────────────────┐    │
+│  │  CDPInterceptor        │   │  APIAnalyzer / Encryption     │    │
+│  │  src/core/cdp-         │   │  Analyzer / EncryptionCracker│    │
+│  │  interceptor.js        │   │  src/core/                   │    │
+│  │                        │   │                              │    │
+│  │  Chrome DevTools       │   │  src/analysis/               │    │
+│  │  Protocol Network      │   │    ast-analyzer.js           │    │
+│  │  Domain                │   │    deobfuscator.js           │    │
+│  └───────────────────────┘   └──────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 技术栈选型
+### 2.2 实际技术栈
 
-| 层级 | 技术选型 | 说明 |
-|------|---------|------|
-| 桌面框架 | Electron + React/Vue | 跨平台桌面应用，界面开发效率高 |
-| 浏览器控制 | Puppeteer / CDP | Chrome DevTools Protocol 协议控制 |
-| 网络分析 | Chrome DevTools Protocol Network | 拦截和分析所有网络请求 |
-| JS分析 | Babel + AST | JavaScript代码静态分析 |
-| 加密识别 | CryptoJS + 自定义规则库 | 常见加密算法识别与破解 |
-| 反混淆 | javascript-obfuscator + de4js | JavaScript代码反混淆 |
-| 数据存储 | SQLite + LevelDB | 本地数据持久化 |
-| 调试器 | Chrome Debugger Protocol | 支持断点调试和变量追踪 |
-
----
-
-## 三、功能模块详细设计
-
-### 3.1 模块一：URL输入与页面加载
-
-#### 3.1.1 功能描述
-用户在主页输入目标网站URL，工具自动启动无头浏览器加载页面。
-
-#### 3.1.2 实现方案
-
-```javascript
-// 核心实现伪代码
-const puppeteer = require('puppeteer');
-
-async function loadPage(url) {
-    const browser = await puppeteer.launch({
-        headless: false,
-        devtools: true,
-        args: ['--auto-open-devtools-for-tabs']
-    });
-    
-    const page = await browser.newPage();
-    
-    // 启用网络请求监控
-    await page.setRequestInterception(true);
-    
-    // 监听所有网络请求
-    page.on('request', request => {
-        captureRequest(request);
-        request.continue();
-    });
-    
-    // 监听响应
-    page.on('response', response => {
-        captureResponse(response);
-    });
-    
-    await page.goto(url, { waitUntil: 'networkidle2' });
-    
-    return { browser, page };
-}
-```
-
-#### 3.1.3 关键配置
-- User-Agent伪装
-- Cookie管理
-- 代理设置
-- 请求头自定义
-
----
-
-### 3.2 模块二：接口自动识别与分类
-
-#### 3.2.1 功能描述
-自动捕获页面加载过程中的所有网络请求，智能识别数据接口。
-
-#### 3.2.2 接口识别策略
-
-**策略一：响应内容分析**
-```javascript
-// 识别数据接口的特征
-function isDataAPI(response) {
-    const contentType = response.headers()['content-type'];
-    const url = response.url();
-    
-    // 特征1: JSON响应
-    if (contentType && contentType.includes('application/json')) {
-        return true;
-    }
-    
-    // 特征2: API路径特征
-    const apiPatterns = [
-        /\/api\//i,
-        /\/v\d+\//i,
-        /\/graphql/i,
-        /\/query/i,
-        /\/list/i,
-        /\/data/i
-    ];
-    
-    if (apiPatterns.some(pattern => pattern.test(url))) {
-        return true;
-    }
-    
-    return false;
-}
-```
-
-**策略二：请求参数分析**
-```javascript
-// 分析请求参数
-function analyzeRequestParams(request) {
-    const method = request.method();
-    const url = new URL(request.url());
-    const postData = request.postData();
-    
-    const params = {
-        queryParams: Object.fromEntries(url.searchParams),
-        bodyParams: postData ? parsePostData(postData) : {},
-        headers: request.headers()
-    };
-    
-    return params;
-}
-```
-
-**策略三：列表页数据识别**
-```javascript
-// 识别列表数据接口
-async function identifyListAPI(responses) {
-    const candidates = [];
-    
-    for (const response of responses) {
-        try {
-            const data = await response.json();
-            
-            // 检查是否包含列表特征
-            if (isListData(data)) {
-                candidates.push({
-                    url: response.url(),
-                    data: data,
-                    confidence: calculateConfidence(data)
-                });
-            }
-        } catch (e) {}
-    }
-    
-    // 按置信度排序
-    return candidates.sort((a, b) => b.confidence - a.confidence);
-}
-
-function isListData(data) {
-    // 特征1: 数组结构
-    if (Array.isArray(data)) return true;
-    
-    // 特征2: 分页结构
-    if (data.list || data.items || data.data) {
-        const listField = data.list || data.items || data.data;
-        if (Array.isArray(listField)) return true;
-    }
-    
-    // 特征3: 分页参数
-    if (data.page || data.pageSize || data.total) return true;
-    
-    return false;
-}
-```
-
-#### 3.2.3 接口分类结果
-
-| 分类 | 特征 | 示例 |
+| 层级 | 技术 | 说明 |
 |------|------|------|
-| 数据接口 | JSON响应，包含列表/分页结构 | /api/list, /graphql |
-| 静态资源 | JS/CSS/图片 | .js, .css, .png |
-| 认证接口 | 登录/注册相关 | /login, /auth |
-| 追踪接口 | 统计/埋点 | /track, /analytics |
+| 桌面框架 | Electron 39 | 主/渲染双进程架构 |
+| 内嵌浏览器 | Electron BrowserView | 嵌入主窗口，支持完整页面渲染与用户交互 |
+| 网络拦截 | Electron `webContents.debugger` + CDP | 真实 CDP 协议，可获取完整响应体 |
+| 前端界面 | 原生 HTML + CSS + JS | 无框架，Class 组件式写法 |
+| JS 静态分析 | `@babel/parser` + `@babel/traverse` | AST 解析与遍历 |
+| 加密识别 | `crypto-js` + 自定义规则 | 常见算法特征检测 |
+| 配置存储 | `electron-store` | 本地 JSON 持久化配置 |
+| 进程通信 | Electron IPC | `ipcMain.handle` / `ipcRenderer.invoke` + 事件推送 |
 
 ---
 
-### 3.3 模块三：加密参数分析
+## 三、核心模块详解
 
-#### 3.3.1 功能描述
-识别请求中的加密参数，分析加密算法和加密位置。
+### 3.1 CDPInterceptor（`src/core/cdp-interceptor.js`）
 
-#### 3.3.2 加密参数识别
+这是请求捕获的核心，通过 Electron 的 `webContents.debugger` API 接入真实的 Chrome DevTools Protocol。
+
+#### 为什么必须使用 CDP 而非 `session.webRequest`
+
+`session.webRequest` 是 Electron 的请求过滤 API，只提供 URL、方法、请求头、响应头和状态码，**从设计上不提供响应体**。要获取完整响应体，必须使用 CDP 的 `Network.getResponseBody` 命令。
+
+#### 初始化流程
 
 ```javascript
-// 识别加密参数
-function identifyEncryptedParams(params) {
-    const encryptedParams = [];
-    
-    for (const [key, value] of Object.entries(params)) {
-        if (isLikelyEncrypted(value)) {
-            encryptedParams.push({
-                param: key,
-                value: value,
-                type: detectEncryptionType(value)
-            });
-        }
-    }
-    
-    return encryptedParams;
-}
+async attachToBrowserView(browserView) {
+    this.cdpDebugger = browserView.webContents.debugger;
+    this.cdpDebugger.attach('1.3');
 
-function isLikelyEncrypted(value) {
-    if (typeof value !== 'string') return false;
-    
-    // Base64特征
-    if (/^[A-Za-z0-9+/]+=*$/.test(value) && value.length % 4 === 0) {
-        return true;
-    }
-    
-    // Hex特征
-    if (/^[a-fA-F0-9]+$/.test(value) && value.length % 2 === 0) {
-        return true;
-    }
-    
-    // URL编码特征
-    if (/%[0-9A-Fa-f]{2}/.test(value)) {
-        return true;
-    }
-    
-    // 长度异常
-    if (value.length > 32 && !/\s/.test(value)) {
-        return true;
-    }
-    
-    return false;
-}
+    // 启用 Network domain，配置缓冲区
+    await this.cdpDebugger.sendCommand('Network.enable', {
+        maxTotalBufferSize: 10 * 1024 * 1024,   // 10MB 总缓冲
+        maxResourceBufferSize: 5 * 1024 * 1024   // 5MB 单资源缓冲
+    });
 
-function detectEncryptionType(value) {
-    // MD5: 32位hex
-    if (/^[a-fA-F0-9]{32}$/.test(value)) return 'MD5';
-    
-    // SHA1: 40位hex
-    if (/^[a-fA-F0-9]{40}$/.test(value)) return 'SHA1';
-    
-    // SHA256: 64位hex
-    if (/^[a-fA-F0-9]{64}$/.test(value)) return 'SHA256';
-    
-    // Base64
-    if (/^[A-Za-z0-9+/]+=*$/.test(value)) return 'Base64';
-    
-    // AES (通常较长)
-    if (value.length > 32 && value.length % 16 === 0) return 'AES';
-    
-    return 'Unknown';
-}
-```
-
-#### 3.3.3 加密位置定位
-
-**方法一：全局搜索加密函数**
-```javascript
-async function locateEncryptionFunction(page, paramName) {
-    // 注入监控代码
-    await page.evaluateOnNewDocument(() => {
-        // Hook常见加密函数
-        const originalBtoa = window.btoa;
-        window.btoa = function(str) {
-            console.log('[ENCRYPT] btoa called with:', str);
-            return originalBtoa.call(this, str);
-        };
-        
-        // Hook CryptoJS
-        if (window.CryptoJS) {
-            const methods = ['MD5', 'SHA1', 'SHA256', 'AES', 'DES'];
-            methods.forEach(method => {
-                if (window.CryptoJS[method]) {
-                    const original = window.CryptoJS[method];
-                    window.CryptoJS[method] = function(...args) {
-                        console.log(`[ENCRYPT] CryptoJS.${method} called:`, args);
-                        return original.apply(this, args);
-                    };
-                }
-            });
+    // 监听 CDP 网络事件
+    this.cdpDebugger.on('message', async (event, method, params) => {
+        switch (method) {
+            case 'Network.requestWillBeSent':  // 捕获请求
+            case 'Network.responseReceived':   // 获取响应头/状态码
+            case 'Network.loadingFinished':    // 获取响应体
+            case 'Network.loadingFailed':      // 记录失败
         }
     });
 }
 ```
 
-**方法二：断点调试追踪**
-```javascript
-async function traceEncryption(page, paramName) {
-    // 获取所有JS文件
-    const scripts = await page.evaluate(() => {
-        return Array.from(document.scripts).map(s => s.src);
-    });
-    
-    // 下载并分析JS文件
-    for (const scriptUrl of scripts) {
-        const scriptContent = await fetchScript(scriptUrl);
-        const encryptPatterns = findEncryptionPatterns(scriptContent);
-        
-        if (encryptPatterns.length > 0) {
-            // 设置断点
-            await setBreakpoint(page, scriptUrl, encryptPatterns);
-        }
-    }
-}
+#### 两阶段响应通知机制
+
+```
+Network.responseReceived
+  → 立即通知渲染进程（携带状态码和响应头）
+  → 请求列表快速显示状态码
+
+Network.loadingFinished
+  → 调用 Network.getResponseBody 获取响应体
+  → 再次通知渲染进程（携带完整响应体）
+  → 详情面板刷新显示响应内容
 ```
 
-**方法三：AST静态分析**
-```javascript
-const parser = require('@babel/parser');
-const traverse = require('@babel/traverse').default;
-
-function analyzeEncryptionInJS(code) {
-    const ast = parser.parse(code, {
-        sourceType: 'module',
-        plugins: ['jsx']
-    });
-    
-    const encryptionCalls = [];
-    
-    traverse(ast, {
-        CallExpression(path) {
-            const callee = path.node.callee;
-            
-            // 检测加密函数调用
-            if (isEncryptionCall(callee)) {
-                encryptionCalls.push({
-                    type: 'CallExpression',
-                    function: getFunctionName(callee),
-                    arguments: path.node.arguments,
-                    location: path.node.loc
-                });
-            }
-        },
-        
-        AssignmentExpression(path) {
-            // 检测参数赋值
-            if (isParamAssignment(path.node)) {
-                encryptionCalls.push({
-                    type: 'Assignment',
-                    param: getParamName(path.node.left),
-                    value: path.node.right,
-                    location: path.node.loc
-                });
-            }
-        }
-    });
-    
-    return encryptionCalls;
-}
-```
-
----
-
-### 3.4 模块四：加密参数破解
-
-#### 3.4.1 功能描述
-根据识别的加密类型，尝试自动破解或提供破解方案。
-
-#### 3.4.2 破解策略
-
-**策略一：已知算法破解**
+#### 响应体处理逻辑
 
 ```javascript
-const crypto = require('crypto');
-
-class EncryptionBreaker {
-    // Base64解码
-    static decodeBase64(str) {
-        try {
-            return Buffer.from(str, 'base64').toString('utf-8');
-        } catch (e) {
-            return null;
-        }
-    }
-    
-    // MD5破解（彩虹表）
-    static async crackMD5(hash) {
-        // 常见密码字典
-        const commonPasswords = ['123456', 'password', 'admin', ...];
-        
-        for (const pwd of commonPasswords) {
-            const md5 = crypto.createHash('md5').update(pwd).digest('hex');
-            if (md5 === hash) {
-                return pwd;
-            }
-        }
-        
-        // 调用在线彩虹表API
-        return await queryOnlineRainbowTable(hash);
-    }
-    
-    // AES解密（需要密钥）
-    static decryptAES(encrypted, key, iv) {
-        try {
-            const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv);
-            let decrypted = decipher.update(encrypted, 'base64', 'utf8');
-            decrypted += decipher.final('utf8');
-            return decrypted;
-        } catch (e) {
-            return null;
-        }
-    }
-    
-    // 时间戳签名破解
-    static crackTimestampSignature(params, encrypted) {
-        const timestamp = Date.now();
-        
-        // 尝试不同的签名组合
-        const combinations = [
-            `${params}&timestamp=${timestamp}`,
-            `${timestamp}${params}`,
-            `${params}${timestamp}`
-        ];
-        
-        for (const combo of combinations) {
-            const hash = crypto.createHash('md5').update(combo).digest('hex');
-            if (hash === encrypted) {
-                return { algorithm: 'MD5', pattern: combo };
-            }
-        }
-        
-        return null;
-    }
-}
-```
-
-**策略二：动态执行获取加密逻辑**
-
-```javascript
-async function extractEncryptionLogic(page, paramName) {
-    // 方法1: 直接调用加密函数
-    const encryptionResult = await page.evaluate((param) => {
-        // 尝试找到加密函数
-        const encryptFunctions = [
-            'encrypt', 'sign', 'signature', 'getToken',
-            'generateSign', 'calcSign', 'getSign'
-        ];
-        
-        for (const funcName of encryptFunctions) {
-            if (typeof window[funcName] === 'function') {
-                return {
-                    found: true,
-                    functionName: funcName,
-                    result: window[funcName](param)
-                };
-            }
-        }
-        
-        return { found: false };
-    }, 'test_param');
-    
-    return encryptionResult;
-}
-```
-
-**策略三：JS逆向还原**
-
-```javascript
-async function reverseEncryption(jsCode) {
-    // 1. 反混淆
-    const deobfuscated = await deobfuscateJS(jsCode);
-    
-    // 2. 提取加密函数
-    const encryptFunction = extractEncryptFunction(deobfuscated);
-    
-    // 3. 分析加密逻辑
-    const logic = analyzeEncryptionLogic(encryptFunction);
-    
-    // 4. 生成Python实现
-    const pythonCode = generatePythonCode(logic);
-    
-    return {
-        deobfuscatedCode: deobfuscated,
-        encryptFunction: encryptFunction,
-        logic: logic,
-        pythonImplementation: pythonCode
-    };
-}
-
-function deobfuscateJS(code) {
-    // 常见混淆模式还原
-    const patterns = [
-        // 十六进制字符串还原
-        [/'\\x[0-9a-fA-F]{2}'/g, match => eval(match)],
-        // Unicode还原
-        [/\\u[0-9a-fA-F]{4}/g, match => eval(`"${match}"`)],
-        // 数组混淆还原
-        [/_0x[a-fA-F0-9]+\[/g, match => /* 还原数组访问 */]
-    ];
-    
-    let deobfuscated = code;
-    patterns.forEach(([pattern, replacement]) => {
-        deobfuscated = deobfuscated.replace(pattern, replacement);
-    });
-    
-    return deobfuscated;
-}
-```
-
----
-
-## 四、工作流程设计
-
-### 4.1 主流程图
-
-```
-┌─────────────┐
-│  输入URL    │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  加载页面   │◄─────────────┐
-└──────┬──────┘              │
-       │                     │
-       ▼                     │
-┌─────────────┐              │
-│  拦截请求   │              │
-└──────┬──────┘              │
-       │                     │
-       ▼                     │
-┌─────────────┐              │
-│  分类请求   │              │
-└──────┬──────┘              │
-       │                     │
-       ▼                     │
-┌─────────────┐      ┌───────┴───────┐
-│ 是否数据接口│──否──►│  继续监听    │
-└──────┬──────┘      └───────────────┘
-       │是
-       ▼
-┌─────────────┐
-│  分析参数   │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│ 识别加密参数│
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐      ┌───────┬───────┐
-│ 是否有加密  │──否──►│ 输出结果      │
-└──────┬──────┘      └───────────────┘
-       │是
-       ▼
-┌─────────────┐
-│  定位加密   │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  分析算法   │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  尝试破解   │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  输出结果   │
-└─────────────┘
-```
-
-### 4.2 详细步骤
-
-#### 步骤1：初始化环境
-```javascript
-async function initialize() {
-    // 1. 启动浏览器
-    const browser = await launchBrowser();
-    
-    // 2. 配置请求拦截
-    const page = await configurePage(browser);
-    
-    // 3. 注入监控脚本
-    await injectMonitorScripts(page);
-    
-    // 4. 初始化数据存储
-    const storage = await initStorage();
-    
-    return { browser, page, storage };
-}
-```
-
-#### 步骤2：加载并分析页面
-```javascript
-async function analyzePage(page, url) {
-    // 1. 导航到目标页面
-    await page.goto(url, { waitUntil: 'networkidle0' });
-    
-    // 2. 等待动态内容加载
-    await page.waitForTimeout(2000);
-    
-    // 3. 触发滚动加载更多数据
-    await autoScroll(page);
-    
-    // 4. 收集所有请求
-    const requests = collectRequests();
-    
-    return requests;
-}
-```
-
-#### 步骤3：智能识别数据接口
-```javascript
-async function identifyDataInterface(requests) {
-    // 1. 过滤非数据请求
-    const dataRequests = requests.filter(r => isDataAPI(r));
-    
-    // 2. 分析响应内容
-    for (const request of dataRequests) {
-        const response = await request.response();
-        const data = await response.json();
-        
-        // 3. 计算数据特征得分
-        const score = calculateDataScore(data);
-        
-        request.dataScore = score;
-    }
-    
-    // 4. 排序并返回最可能的数据接口
-    return dataRequests.sort((a, b) => b.dataScore - a.dataScore);
-}
-```
-
-#### 步骤4：加密参数深度分析
-```javascript
-async function deepAnalyzeEncryption(page, request) {
-    // 1. 提取所有JS文件
-    const jsFiles = await extractJSFiles(page);
-    
-    // 2. 分析每个JS文件
-    const analysisResults = [];
-    for (const jsFile of jsFiles) {
-        const content = await fetchJS(jsFile);
-        const analysis = await analyzeJS(content, request);
-        analysisResults.push(analysis);
-    }
-    
-    // 3. 合并分析结果
-    const encryptionInfo = mergeAnalysisResults(analysisResults);
-    
-    // 4. 尝试破解
-    const crackResult = await attemptCrack(encryptionInfo);
-    
-    return crackResult;
-}
-```
-
----
-
-## 五、关键技术实现
-
-### 5.1 Chrome DevTools Protocol 应用
-
-```javascript
-const CDP = require('chrome-remote-interface');
-
-async function useCDP() {
-    const client = await CDP();
-    const { Network, Page, Debugger, Runtime } = client;
-    
-    // 启用网络监控
-    await Network.enable();
-    
-    // 启用页面监控
-    await Page.enable();
-    
-    // 启用调试器
-    await Debugger.enable();
-    
-    // 监听网络请求
-    Network.requestWillBeSent((params) => {
-        console.log('Request:', params.request.url);
-        console.log('Method:', params.request.method);
-        console.log('Headers:', params.request.headers);
-        console.log('PostData:', params.request.postData);
-    });
-    
-    // 监听响应
-    Network.responseReceived(async (params) => {
-        const { response } = params;
-        console.log('Response:', response.url);
-        console.log('Status:', response.status);
-        console.log('Headers:', response.headers);
-        
-        // 获取响应体
-        const body = await Network.getResponseBody({
-            requestId: params.requestId
-        });
-        console.log('Body:', body);
-    });
-    
-    // 设置断点
-    await Debugger.setBreakpointByUrl({
-        lineNumber: 100,
-        urlRegex: '.*\\.js'
-    });
-    
-    // 监听断点
-    Debugger.paused((params) => {
-        console.log('Paused at:', params.callFrames[0]);
-        // 获取变量值
-        Runtime.evaluate({
-            expression: 'Object.keys(window)'
-        });
-    });
-}
-```
-
-### 5.2 JavaScript AST分析
-
-```javascript
-const parser = require('@babel/parser');
-const traverse = require('@babel/traverse').default;
-const t = require('@babel/types');
-const generate = require('@babel/generator').default;
-
-class JSAnalyzer {
-    constructor(code) {
-        this.ast = parser.parse(code, {
-            sourceType: 'module',
-            plugins: ['jsx', 'typescript']
-        });
-        this.encryptionFunctions = [];
-        this.apiCalls = [];
-    }
-    
-    // 查找加密函数
-    findEncryptionFunctions() {
-        traverse(this.ast, {
-            FunctionDeclaration(path) {
-                const name = path.node.id?.name;
-                if (this.isEncryptionFunction(name)) {
-                    this.encryptionFunctions.push({
-                        name: name,
-                        params: path.node.params,
-                        body: path.node.body,
-                        loc: path.node.loc
-                    });
-                }
-            },
-            
-            VariableDeclarator(path) {
-                if (t.isFunctionExpression(path.node.init)) {
-                    const name = path.node.id?.name;
-                    if (this.isEncryptionFunction(name)) {
-                        this.encryptionFunctions.push({
-                            name: name,
-                            params: path.node.init.params,
-                            body: path.node.init.body,
-                            loc: path.node.loc
-                        });
-                    }
-                }
-            }
-        });
-        
-        return this.encryptionFunctions;
-    }
-    
-    // 查找API调用
-    findAPICalls() {
-        traverse(this.ast, {
-            CallExpression(path) {
-                const callee = path.node.callee;
-                
-                // fetch调用
-                if (t.isIdentifier(callee, { name: 'fetch' })) {
-                    this.apiCalls.push({
-                        type: 'fetch',
-                        arguments: path.node.arguments,
-                        loc: path.node.loc
-                    });
-                }
-                
-                // axios调用
-                if (t.isMemberExpression(callee)) {
-                    if (callee.object.name === 'axios') {
-                        this.apiCalls.push({
-                            type: 'axios',
-                            method: callee.property.name,
-                            arguments: path.node.arguments,
-                            loc: path.node.loc
-                        });
-                    }
-                }
-                
-                // XMLHttpRequest
-                if (t.isMemberExpression(callee)) {
-                    if (callee.property.name === 'open' || callee.property.name === 'send') {
-                        this.apiCalls.push({
-                            type: 'xhr',
-                            method: callee.property.name,
-                            arguments: path.node.arguments,
-                            loc: path.node.loc
-                        });
-                    }
-                }
-            }
-        });
-        
-        return this.apiCalls;
-    }
-    
-    // 判断是否为加密函数
-    isEncryptionFunction(name) {
-        const patterns = [
-            /encrypt/i, /decrypt/i, /sign/i, /signature/i,
-            /hash/i, /encode/i, /decode/i, /cipher/i,
-            /crypto/i, /md5/i, /sha/i, /aes/i, /rsa/i
-        ];
-        
-        return patterns.some(pattern => pattern.test(name));
-    }
-    
-    // 提取函数调用关系
-    extractCallGraph() {
-        const callGraph = new Map();
-        
-        traverse(this.ast, {
-            FunctionDeclaration(path) {
-                const functionName = path.node.id?.name;
-                const calls = [];
-                
-                path.traverse({
-                    CallExpression(innerPath) {
-                        const callee = innerPath.node.callee;
-                        if (t.isIdentifier(callee)) {
-                            calls.push(callee.name);
-                        }
-                    }
-                });
-                
-                callGraph.set(functionName, calls);
-            }
-        });
-        
-        return callGraph;
-    }
-}
-```
-
-### 5.3 反混淆处理
-
-```javascript
-class Deobfuscator {
-    constructor(code) {
-        this.code = code;
-    }
-    
-    // 字符串数组还原
-    decodeStringArray() {
-        // 匹配字符串数组定义
-        const arrayPattern = /var\s+_0x[a-f0-9]+\s*=\s*\[([^\]]+)\]/;
-        const match = this.code.match(arrayPattern);
-        
-        if (match) {
-            const array = eval(`[${match[1]}]`);
-            return array;
-        }
-        
-        return null;
-    }
-    
-    // 十六进制字符串还原
-    decodeHexStrings() {
-        return this.code.replace(
-            /'\\x([0-9a-fA-F]{2})'/g,
-            (match, hex) => String.fromCharCode(parseInt(hex, 16))
-        );
-    }
-    
-    // Unicode转义还原
-    decodeUnicode() {
-        return this.code.replace(
-            /\\u([0-9a-fA-F]{4})/g,
-            (match, hex) => String.fromCharCode(parseInt(hex, 16))
-        );
-    }
-    
-    // 控制流平坦化还原
-    deflattenControlFlow() {
-        const ast = parser.parse(this.code);
-        
-        traverse(ast, {
-            WhileStatement(path) {
-                // 检测控制流平坦化模式
-                const test = path.node.test;
-                const body = path.node.body;
-                
-                if (t.isLiteral(test, { value: true }) || 
-                    t.isStringLiteral(test)) {
-                    // 提取switch语句
-                    const switchStmt = body.body.find(t.isSwitchStatement);
-                    if (switchStmt) {
-                        // 还原控制流
-                        this.reorderStatements(switchStmt);
-                    }
-                }
-            }
-        });
-        
-        return generate(ast).code;
-    }
-    
-    // 完整反混淆流程
-    deobfuscate() {
-        let result = this.code;
-        
-        // 1. 十六进制还原
-        result = this.decodeHexStrings();
-        
-        // 2. Unicode还原
-        result = this.decodeUnicode();
-        
-        // 3. 字符串数组还原
-        const stringArray = this.decodeStringArray();
-        if (stringArray) {
-            result = this.replaceStringArrayCalls(result, stringArray);
-        }
-        
-        // 4. 控制流还原
-        result = this.deflattenControlFlow();
-        
-        // 5. 变量重命名
-        result = this.renameVariables(result);
-        
-        return result;
-    }
-}
-```
-
----
-
-## 六、界面设计
-
-### 6.1 主界面布局
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│  🔍 谷歌浏览器自动逆向工具                          [—][□][×] │
-├────────────────────────────────────────────────────────────────┤
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  URL: https://weibo.com/...                    [开始分析]│  │
-│  └──────────────────────────────────────────────────────────┘  │
-├────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┬──────────────────────────────────────────┐   │
-│  │ 请求列表    │  详情面板                                 │   │
-│  ├─────────────┤  ┌────────────────────────────────────┐  │   │
-│  │ ○ API请求1  │  │ 请求URL: /api/list                 │  │   │
-│  │ ● API请求2  │  │ 请求方法: POST                     │  │   │
-│  │ ○ API请求3  │  │ ─────────────────────────────────  │  │   │
-│  │ ○ 静态资源  │  │ 请求参数:                          │  │   │
-│  │ ○ 静态资源  │  │   page: 1                          │  │   │
-│  │ ○ 追踪请求  │  │   size: 20                         │  │   │
-│  │             │  │   sign: a1b2c3d4... [加密]         │  │   │
-│  │             │  │ ─────────────────────────────────  │  │   │
-│  │             │  │ 响应数据:                          │  │   │
-│  │             │  │   {                                │  │   │
-│  │             │  │     "code": 200,                   │  │   │
-│  │             │  │     "data": [...]                  │  │   │
-│  │             │  │   }                                │  │   │
-│  │             │  └────────────────────────────────────┘  │   │
-│  └─────────────┴──────────────────────────────────────────┘   │
-├────────────────────────────────────────────────────────────────┤
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ 加密分析结果                                              │  │
-│  ├──────────────────────────────────────────────────────────┤  │
-│  │ 参数名: sign                                             │  │
-│  │ 加密类型: MD5                                            │  │
-│  │ 加密位置: https://example.com/static/js/main.js:1234     │  │
-│  │ 加密函数: function calcSign(params) { ... }              │  │
-│  │ 破解状态: ✅ 已破解                                       │  │
-│  │ 破解方案: MD5(page + size + timestamp + secret)          │  │
-│  │ [查看详细代码]  [导出Python脚本]  [导出Node.js脚本]       │  │
-│  └──────────────────────────────────────────────────────────┘  │
-├────────────────────────────────────────────────────────────────┤
-│  状态: 分析完成 | 发现 3 个数据接口 | 识别 1 个加密参数        │
-└────────────────────────────────────────────────────────────────┘
-```
-
-### 6.2 功能按钮说明
-
-| 按钮 | 功能 |
-|------|------|
-| 开始分析 | 启动页面加载和请求拦截 |
-| 停止分析 | 停止当前分析过程 |
-| 导出报告 | 导出分析结果为PDF/HTML |
-| 导出脚本 | 导出破解脚本（Python/Node.js） |
-| 查看源码 | 查看JS源码和反混淆结果 |
-| 重放请求 | 重新发送请求验证破解结果 |
-
----
-
-## 七、项目结构
-
-```
-browser-reverse-tool/
-├── package.json
-├── electron.config.js
-├── src/
-│   ├── main/                    # Electron主进程
-│   │   ├── index.js
-│   │   ├── browser.js          # 浏览器控制
-│   │   └── ipc.js              # 进程通信
-│   │
-│   ├── renderer/               # 渲染进程（前端）
-│   │   ├── index.html
-│   │   ├── App.vue
-│   │   ├── components/
-│   │   │   ├── URLInput.vue
-│   │   │   ├── RequestList.vue
-│   │   │   ├── DetailPanel.vue
-│   │   │   └── EncryptionResult.vue
-│   │   └── store/
-│   │       └── index.js
-│   │
-│   ├── core/                   # 核心引擎
-│   │   ├── interceptor.js      # 请求拦截器
-│   │   ├── analyzer.js         # 接口分析器
-│   │   ├── encryption.js       # 加密分析
-│   │   └── cracker.js          # 加密破解
-│   │
-│   ├── analysis/               # 分析模块
-│   │   ├── ast-analyzer.js     # AST分析
-│   │   ├── deobfuscator.js     # 反混淆
-│   │   ├── pattern-matcher.js  # 模式匹配
-│   │   └── crypto-detector.js  # 加密检测
-│   │
-│   ├── utils/                  # 工具函数
-│   │   ├── crypto.js
-│   │   ├── network.js
-│   │   └── storage.js
-│   │
-│   └── assets/                 # 静态资源
-│       ├── icons/
-│       └── styles/
-│
-├── tests/                      # 测试
-│   ├── unit/
-│   └── e2e/
-│
-└── docs/                       # 文档
-    ├── API.md
-    └── GUIDE.md
-```
-
----
-
-## 八、风险与挑战
-
-### 8.1 技术挑战
-
-| 挑战 | 描述 | 解决方案 |
-|------|------|---------|
-| 复杂加密算法 | 自定义加密算法难以识别 | 建立加密特征库，机器学习辅助识别 |
-| 代码混淆 | 高强度混淆难以还原 | 多层次反混淆，动态执行分析 |
-| 反调试机制 | 网站检测调试行为 | 注入反反调试代码 |
-| 动态加载 | JS动态加载难以追踪 | MutationObserver监听DOM变化 |
-| WebSocket通信 | 实时数据流难以拦截 | WebSocket帧拦截与分析 |
-
-### 8.2 法律风险
-
-- **用途限制**：仅用于合法的安全研究和授权测试
-- **数据隐私**：不得获取和存储用户隐私数据
-- **知识产权**：不得破解商业软件和受保护内容
-- **使用声明**：工具需包含使用免责声明
-
-### 8.3 应对策略
-
-```javascript
-// 反反调试代码注入
-const antiAntiDebug = `
-    // 禁用debugger检测
-    const originalDebugger = Object.getOwnPropertyDescriptor(
-        Window.prototype, 'debugger'
+async handleCDPLoadingFinished({ requestId }) {
+    const result = await this.cdpDebugger.sendCommand(
+        'Network.getResponseBody', { requestId }
     );
-    
-    Object.defineProperty(Window.prototype, 'debugger', {
-        get: function() { return undefined; },
-        set: function() {}
-    });
-    
-    // 禁用控制台检测
-    const originalConsole = window.console;
-    Object.defineProperty(window, 'console', {
-        get: function() { return originalConsole; },
-        set: function() {}
-    });
-    
-    // 禁用DevTools检测
-    const originalToString = Function.prototype.toString;
-    Function.prototype.toString = function() {
-        if (this === originalDebugger?.get) {
-            return 'function getter() { [native code] }';
-        }
-        return originalToString.call(this);
-    };
-`;
+
+    let bodyText = result.body || '';
+    if (result.base64Encoded && bodyText) {
+        // Base64 解码（处理 gzip 等压缩内容）
+        bodyText = Buffer.from(bodyText, 'base64').toString('utf8');
+    }
+
+    // 优先解析为 JSON，失败则按 Content-Type 归类
+    try {
+        request.response.body = JSON.parse(bodyText);
+        request.response.bodyType = 'json';
+    } catch {
+        request.response.body = bodyText;
+        request.response.bodyType = detectBodyType(headers); // html/js/css/xml/text
+    }
+}
 ```
 
 ---
 
-## 九、开发计划
+### 3.2 实时流式请求捕获架构
 
-### 9.1 阶段划分
+#### 设计背景
 
-| 阶段 | 时间 | 任务 | 交付物 |
-|------|------|------|--------|
-| 第一阶段 | 2周 | 基础框架搭建 | Electron框架、基础UI |
-| 第二阶段 | 2周 | 请求拦截与分类 | 网络监控模块 |
-| 第三阶段 | 3周 | 加密参数识别 | 加密检测引擎 |
-| 第四阶段 | 3周 | 加密破解实现 | 破解算法库 |
-| 第五阶段 | 2周 | 界面优化与测试 | 完整应用 |
-| 第六阶段 | 1周 | 文档与发布 | 用户手册、API文档 |
+旧版采用"一次性批量"模式：等待页面加载完成 → 返回全部请求。这导致：
+- 遇到验证码时，页面加载"完成"后返回，之后用户过验证码产生的请求全部丢失
+- 用户手动交互产生的请求无法被捕获
 
-### 9.2 里程碑
+#### 当前架构：事件驱动流式推送
 
-- **M1**：完成基础UI和浏览器控制
-- **M2**：实现请求拦截和接口识别
-- **M3**：完成加密参数自动识别
-- **M4**：实现常见加密算法破解
-- **M5**：完成完整功能测试
-- **M6**：正式发布v1.0版本
+```
+用户点击"开始分析"
+  ↓
+主进程：创建 BrowserView，挂载 CDP，立即返回 success
+  ↓
+主进程注册 CDP 监听器：
+  每条新请求 → ipcMain.webContents.send('request-captured', {type:'request', data})
+  每条新响应 → ipcMain.webContents.send('request-captured', {type:'response', data})
+  ↓
+渲染进程：
+  ipcRenderer.on('request-captured') → addOrUpdateRequest() → 防抖重绘列表
+  ↓
+遇到验证码 → 用户手动操作 → 后续请求继续推送 ✅
+  ↓
+用户点击"停止" → isAnalyzing = false → 停止接收 → 显示总计数
+```
+
+#### 增量更新与防抖渲染
+
+```javascript
+addOrUpdateRequest({ type, data }) {
+    if (type === 'request') {
+        // 去重后追加到列表
+        if (!this.requests.find(r => String(r.id) === String(data.id))) {
+            this.requests.push(data);
+        }
+    } else if (type === 'response') {
+        // 更新对应请求的响应数据
+        const idx = this.requests.findIndex(r => String(r.id) === String(data.request.id));
+        if (idx >= 0) this.requests[idx] = data.request;
+        // 若当前正查看该请求，同步刷新详情面板
+        if (this.selectedRequest?.id === data.request.id) {
+            this.selectedRequest = data.request;
+            this.renderRequestDetail();
+        }
+    }
+
+    // 立即更新计数徽标
+    this.requestCount.textContent = this.requests.length;
+
+    // 200ms 防抖整体重绘列表（避免高频请求连续重绘）
+    clearTimeout(this._renderDebounceTimer);
+    this._renderDebounceTimer = setTimeout(() => this.renderRequests(), 200);
+}
+```
 
 ---
 
-## 十、附录
+### 3.3 IPC 通信接口
 
-### 10.1 常见加密算法特征
+#### 主进程暴露的 Handle（请求-响应型）
+
+| Channel | 参数 | 返回 | 说明 |
+|---------|------|------|------|
+| `start-analysis` | `url: string` | `{success, data: {url}}` | 启动分析，立即返回 |
+| `stop-analysis` | — | `{success}` | 停止分析，销毁 BrowserView |
+| `get-requests` | — | `Request[]` | 获取当前所有请求 |
+| `analyze-api` | `requestId` | `AnalysisResult` | 分析指定请求 |
+| `analyze-encryption` | `params` | `EncryptionResult` | 分析加密参数 |
+| `crack-encryption` | `data, type` | `CrackResult` | 尝试破解加密 |
+| `export-script` | `type, data` | `string` | 导出破解脚本 |
+| `browser-navigate` | `url` | — | 导航到指定 URL |
+| `browser-back` | — | — | 后退 |
+| `browser-forward` | — | — | 前进 |
+| `browser-refresh` | — | — | 刷新 |
+| `browser-devtools` | — | — | 打开 DevTools |
+| `show-browser` | — | — | 更新 BrowserView 边界 |
+
+#### 主进程主动推送的事件（单向推送）
+
+| Channel | 数据 | 触发时机 |
+|---------|------|---------|
+| `request-captured` | `{type: 'request'\|'response', data}` | 每条请求或响应到达时 |
+| `browser-url-changed` | `url: string` | 页面导航完成 |
+| `browser-loading` | `isLoading: boolean` | 页面开始/停止加载 |
+| `browser-load-error` | `message: string` | 导航发生错误 |
+
+---
+
+### 3.4 界面模块（`src/renderer/`）
+
+渲染进程采用单文件 `App` 类管理所有 UI 状态和交互。
+
+#### 请求列表
+
+每个列表项展示三列：
+```
+[METHOD]  [路径 + 域名 + 类型标签]  [状态码 + 时间]
+```
+
+支持功能：
+- **类型过滤**：全部 / API（XHR+Fetch）/ XHR / 加密
+- **URL 搜索**：实时过滤
+- **点击选中**：仅切换 `active` 类，不重绘整个列表
+
+#### 请求详情（五标签页）
+
+| 标签页 | 内容 |
+|--------|------|
+| 概览 | 完整 URL、方法、状态码、资源类型、域名、路径、时间戳、加密标记 |
+| 请求头 | 所有请求头的 KV 表格 |
+| 参数 | Query 参数 KV 表格 + POST 请求体（格式化展示） |
+| 响应头 | 所有响应头的 KV 表格 |
+| 响应体 | 格式化 JSON / 文本代码块，带一键复制按钮 |
+
+响应体的 `bodyType` 状态流转：
+```
+请求进行中：null
+responseReceived 后：'loading'（显示"正在获取..."）
+loadingFinished 后：'json' / 'html' / 'javascript' / 'css' / 'xml' / 'text'
+不可用时：'unavailable' 或 'binary'
+```
+
+#### 可拖拽布局
+
+| 操作 | 效果 |
+|------|------|
+| 拖动浏览器区域底部手柄 | 上下调整浏览器面板高度（最小 44px，最大 72%） |
+| 点击浏览器 toolbar 的 ▼/▶ 按钮 | 折叠/展开浏览器面板 |
+| 拖动两面板中间分隔条 | 左右调整请求列表与详情面板宽度（两侧最小 180px） |
+
+---
+
+## 四、项目结构
+
+```
+auto-reverser/
+├── package.json
+├── src/
+│   ├── main/
+│   │   └── index.js              # 主进程：窗口、BrowserView、IPC、生命周期
+│   │
+│   ├── renderer/                 # 渲染进程（主界面）
+│   │   ├── index.html            # 页面结构
+│   │   ├── scripts/
+│   │   │   └── renderer.js       # App 类：全部 UI 逻辑
+│   │   └── styles/
+│   │       └── main.css          # 深色主题样式
+│   │
+│   ├── core/                     # 核心引擎
+│   │   ├── cdp-interceptor.js    # CDP 拦截器（主要使用）
+│   │   ├── interceptor.js        # 旧版 webRequest 拦截器（保留备用）
+│   │   ├── analyzer.js           # API 接口分析器
+│   │   ├── encryption.js         # 加密参数分析
+│   │   └── cracker.js            # 加密破解器
+│   │
+│   ├── analysis/                 # 静态分析模块
+│   │   ├── ast-analyzer.js       # Babel AST 分析
+│   │   └── deobfuscator.js       # JS 反混淆
+│   │
+│   └── preload/
+│       └── browser-preload.js    # BrowserView 预加载脚本
+│
+└── docs/
+    └── API逆向分析项目文档.md
+```
+
+---
+
+## 五、界面布局
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│  🔍 Auto Reverser                        [导出报告] [⚙️]       │
+├───────────────────────────────────────────────────────────────┤
+│  ┌───────────────────────────────────────────────────────┐    │
+│  │  https://example.com/...         [开始分析] / [停止]   │    │
+│  │  ☑ 拦截XHR/Fetch请求   ☑ 自动分析加密参数              │    │
+│  └───────────────────────────────────────────────────────┘    │
+├── 浏览器区域（可上下拖拽调整高度，可折叠）─────────────────────┤
+│  ◀ ▶ 🔄  │  https://example.com/...  │  [开发者工具] [▼]      │
+│  ┌──────────────────────────────────────────────────────┐     │
+│  │                  BrowserView（内嵌浏览器）              │     │
+│  └──────────────────────────────────────────────────────┘     │
+├── 拖拽手柄 ────────────────────────────────────────────────────┤
+│  ┌──────────────────────────┬─┬──────────────────────────┐    │
+│  │ 请求列表  [0]             │ │ 请求详情                  │    │
+│  │ [全部][API][XHR][加密]   │║│ [概览][请求头][参数]       │    │
+│  │ [搜索 URL...]            │ │ [响应头][响应体]            │    │
+│  ├──────────────────────────┤ │ [复制][重放]              │    │
+│  │ GET  /api/data   200     │ ├───────────────────────────┤    │
+│  │      example.com fetch   │ │ URL: https://...          │    │
+│  │ POST /api/login  401     │ │ 方法: POST                 │    │
+│  │      example.com xhr     │ │ 状态: 200 OK               │    │
+│  │ GET  /static/js  200     │ │ 类型: fetch               │    │
+│  │  ...                     │ │ 域名: example.com          │    │
+│  └──────────────────────────┘ └───────────────────────────┘    │
+│    ↑可左右拖拽分隔条↑                                           │
+├───────────────────────────────────────────────────────────────┤
+│  正在捕获请求，遇到验证码请手动通过后继续...    请求: 42        │
+└───────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 六、关键设计决策
+
+### 6.1 使用 Electron BrowserView 而非 Puppeteer
+
+| 方案 | 优点 | 缺点 |
+|------|------|------|
+| Puppeteer | 控制能力强，接口完善 | 独立进程，无法嵌入界面；用户无法直接操作页面 |
+| BrowserView | 嵌入主窗口，用户可直接交互（过验证码、手动操作） | 控制接口较少 |
+
+选择 BrowserView 的核心原因：**支持用户手动干预**（过验证码、登录、触发交互），这对逆向分析场景至关重要。
+
+### 6.2 非阻塞导航设计
+
+```javascript
+// ❌ 旧设计：等待页面加载完再返回
+await browserView.webContents.loadURL(url, { timeout: 60000 });
+await autoScroll(browserView);
+return { requests: cdpInterceptor.getAllRequests() }; // 一次性返回
+
+// ✅ 新设计：立即返回，请求持续推送
+browserView.webContents.loadURL(url).catch(handleError); // 不 await
+return { url }; // 立即返回，请求通过事件实时推送
+```
+
+**优势**：
+- 验证码出现时用户可以手动通过，后续请求继续被捕获
+- 长时间加载页面不会阻塞用户操作
+- 用户随时可以手动导航，所有请求均被记录
+
+### 6.3 响应体获取的两阶段通知
+
+`Network.responseReceived` 时只有头部信息，响应体在 `Network.loadingFinished` 后才能通过 `Network.getResponseBody` 获取。设计为两次通知：
+1. **第一次**（`responseReceived`）：立即更新状态码，请求列表快速显示响应状态
+2. **第二次**（`loadingFinished`）：补充响应体，详情面板自动刷新
+
+---
+
+## 七、依赖说明
+
+### 生产依赖
+
+| 包名 | 版本 | 用途 |
+|------|------|------|
+| `electron-store` | ^8.1.0 | 本地配置持久化 |
+| `uuid` | ^9.0.0 | 生成唯一 ID |
+| `@babel/parser` | ^7.23.0 | JS 代码 AST 解析 |
+| `@babel/traverse` | ^7.23.0 | AST 遍历 |
+| `@babel/types` | ^7.23.0 | AST 节点类型工具 |
+| `@babel/generator` | ^7.23.0 | AST 转回代码 |
+| `crypto-js` | ^4.2.0 | 加密算法识别与处理 |
+| `chrome-remote-interface` | ^0.33.0 | CDP 客户端（分析模块备用） |
+| `puppeteer` | ^24.0.0 | 高级浏览器控制（分析模块备用） |
+
+### 开发依赖
+
+| 包名 | 版本 | 用途 |
+|------|------|------|
+| `electron` | ^39.0.0 | 桌面应用框架 |
+| `electron-builder` | ^25.0.0 | 应用打包 |
+| `eslint` | ^8.53.0 | 代码规范检查 |
+| `jest` | ^29.7.0 | 单元测试 |
+
+---
+
+## 八、待完善功能
+
+### 8.1 导出报告
+当前"导出报告"按钮已渲染但处于禁用状态，需实现：
+- 将捕获的请求数据导出为 JSON / CSV / HTML 报告
+- 调用 `ipcMain.handle('export-script', ...)` 接口已实现，待接入 UI
+
+### 8.2 请求重放
+"重放"按钮点击后显示"功能开发中"，需实现：
+- 读取选中请求的 URL、方法、请求头、请求体
+- 通过 Node.js `https`/`axios` 重新发送请求
+- 展示响应结果并与原始响应对比
+
+### 8.3 加密参数 UI 集成
+`src/core/encryption.js`、`src/core/cracker.js`、`src/analysis/ast-analyzer.js`、`src/analysis/deobfuscator.js` 已实现核心逻辑，但尚未与界面连接：
+- 在请求详情中展示加密参数分析结果
+- 提供尝试破解的交互入口
+- 导出破解脚本（Python / Node.js）
+
+---
+
+## 九、常见加密特征参考
 
 | 算法 | 特征 | 长度 | 示例 |
 |------|------|------|------|
-| MD5 | Hex字符串 | 32位 | `d41d8cd98f00b204e9800998ecf8427e` |
-| SHA1 | Hex字符串 | 40位 | `da39a3ee5e6b4b0d3255bfef95601890afd80709` |
-| SHA256 | Hex字符串 | 64位 | `e3b0c44298fc1c149afbf4c8996fb924...` |
-| Base64 | 字母数字+/= | 4的倍数 | `SGVsbG8gV29ybGQ=` |
-| AES | Base64/Hex | 16/32字节倍数 | 加密数据 |
-| RSA | Base64 | 128/256字节 | 公钥加密数据 |
-
-### 10.2 参考资源
-
-- [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/)
-- [Puppeteer文档](https://pptr.dev/)
-- [Babel AST文档](https://babeljs.io/docs/en/babel-parser)
-- [CryptoJS文档](https://cryptojs.gitbook.io/docs/)
+| MD5 | Hex 字符串 | 32 位 | `d41d8cd98f00b204e9800998ecf8427e` |
+| SHA1 | Hex 字符串 | 40 位 | `da39a3ee5e6b4b0d3255bfef95601890afd80709` |
+| SHA256 | Hex 字符串 | 64 位 | `e3b0c44298fc1c149afbf4c8996fb924...` |
+| Base64 | 字母数字 + `/=` | 4 的倍数 | `SGVsbG8gV29ybGQ=` |
+| AES | Base64 / Hex | 16/32 字节倍数 | 加密块数据 |
+| RSA | Base64 | 128/256 字节 | 公钥加密结果 |
 
 ---
 
-**文档版本**：v1.0  
+## 十、参考资料
+
+- [Chrome DevTools Protocol — Network Domain](https://chromedevtools.github.io/devtools-protocol/tot/Network/)
+- [Electron webContents.debugger API](https://www.electronjs.org/docs/latest/api/debugger)
+- [Electron BrowserView](https://www.electronjs.org/docs/latest/api/browser-view)
+- [Babel AST 文档](https://babeljs.io/docs/en/babel-parser)
+- [CryptoJS 文档](https://cryptojs.gitbook.io/docs/)
+
+---
+
+**文档版本**：v2.0  
 **创建日期**：2025-03-25  
-**最后更新**：2025-03-25
+**最后更新**：2026-03-30
