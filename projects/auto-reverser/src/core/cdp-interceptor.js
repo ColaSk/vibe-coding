@@ -241,7 +241,8 @@ class CDPInterceptor {
         }
         this.browserView = null;
         this.clearListeners();
-        this.clear();
+        // 不在这里 clear()：停止捕获后数据仍需保留，供 Agent 分析
+        // 数据清除发生在下次 attachToBrowserView() 开始新会话时
     }
 }
 

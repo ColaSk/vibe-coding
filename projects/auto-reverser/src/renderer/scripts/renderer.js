@@ -23,6 +23,7 @@ class App {
         this.setupBrowserListeners();
         this.setupBrowserResize();
         this.setupPanelsResize();
+        this.setupAgentResize();
         this.applyTheme(this.theme, false);
         this.updateStatus('就绪');
     }
@@ -52,6 +53,17 @@ class App {
         this.requestCount = document.getElementById('request-count');
         this.requestSearch = document.getElementById('request-search');
         this.detailTabsContainer = document.getElementById('detail-tabs-container');
+
+        // Agent 面板
+        this.btnAgent          = document.getElementById('btn-agent');
+        this.agentPanel        = document.getElementById('agent-panel');
+        this.agentResizeHandle = document.getElementById('agent-resize-handle');
+        this.agentMessages     = document.getElementById('agent-messages');
+        this.agentInput        = document.getElementById('agent-input');
+        this.agentModelInput   = document.getElementById('agent-model');
+        this.agentHostInput    = document.getElementById('agent-host');
+        this.agentStatusDot    = document.getElementById('agent-status-dot');
+        this.btnAgentSend      = document.getElementById('btn-agent-send');
     }
 
     bindEvents() {
@@ -62,7 +74,7 @@ class App {
             if (e.key === 'Enter') this.startAnalysis();
         });
 
-        document.querySelectorAll('.filter-btn').forEach(btn => {
+        document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
             btn.addEventListener('click', (e) => this.filterRequests(e.target.dataset.filter));
         });
 
@@ -84,6 +96,31 @@ class App {
         this.btnDevtools.addEventListener('click', () => this.openDevtools());
         this.btnToggleBrowser.addEventListener('click', () => this.toggleBrowser());
         this.btnTheme.addEventListener('click', () => this.toggleTheme());
+
+        // Agent 面板事件
+        this.btnAgent.addEventListener('click', () => this.openAgentPanel());
+        document.getElementById('btn-agent-close').addEventListener('click', () => this.closeAgentPanel());
+        this.btnAgentSend.addEventListener('click', () => this.sendAgentMessage());
+        document.getElementById('btn-agent-verify').addEventListener('click', () => this.verifyOllama());
+
+        // Ctrl/Cmd + Enter 发送
+        this.agentInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                this.sendAgentMessage();
+            }
+        });
+
+        // 监听 Agent 流式事件
+        ipcRenderer.on('agent-stream', (_, ev) => this.handleAgentStream(ev));
+
+        // 初始化：读取保存的模型配置
+        ipcRenderer.invoke('llm-config-get').then(cfg => {
+            if (cfg && cfg.model) this.agentModelInput.value = cfg.model;
+            if (cfg && cfg.host && cfg.host !== 'http://localhost:11434') {
+                this.agentHostInput.value = cfg.host;
+            }
+        });
     }
 
     // ─── 主题切换 ─────────────────────────────────────────────────────────────
@@ -115,8 +152,11 @@ class App {
     setupBrowserResize() {
         const handle = this.browserResizeHandle;
         const section = this.browserSection;
-        const MIN_HEIGHT = 44;   // 只露出 toolbar
-        const MAX_RATIO = 0.72;  // 最多占可用高度的 72%
+        const MIN_HEIGHT     = 44;   // 只露出 toolbar
+        const MIN_ANALYSIS_H = 180;  // 请求/详情面板最低高度
+        const GAP            = 20;   // main-content 的 gap
+        const HANDLE_H       = 8;    // browser-resize-handle 高度
+        const PADDING_V      = 40;   // main-content 上下 padding 合计
 
         let startY = 0;
         let startH = 0;
@@ -124,10 +164,14 @@ class App {
 
         const onMouseMove = (e) => {
             if (!dragging) return;
-            const mainH = document.querySelector('.main-content').clientHeight;
-            const maxH = Math.floor(mainH * MAX_RATIO);
+            const col = document.querySelector('.main-col');
+            const urlSection = document.querySelector('.url-input-section');
+            // 真实可分配给浏览器的最大高度：总高减去 padding、URL区、间距、手柄、最小分析区
+            const mainH = col.clientHeight;
+            const urlH  = urlSection ? urlSection.offsetHeight : 100;
+            const maxH  = mainH - PADDING_V - urlH - GAP * 3 - HANDLE_H - MIN_ANALYSIS_H;
             let newH = startH + (e.clientY - startY);
-            newH = Math.max(MIN_HEIGHT, Math.min(maxH, newH));
+            newH = Math.max(MIN_HEIGHT, Math.min(Math.max(MIN_HEIGHT, maxH), newH));
 
             this.browserHeight = newH;
             section.style.height = newH + 'px';
@@ -200,6 +244,47 @@ class App {
             dragging = true;
             startX = e.clientX;
             startW = leftPanel.offsetWidth;
+            handle.classList.add('active');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+            e.preventDefault();
+        });
+    }
+
+    setupAgentResize() {
+        const handle = this.agentResizeHandle;
+        const panel  = this.agentPanel;
+        const MIN_WIDTH = 260;
+        const MAX_WIDTH = 720;
+
+        let startX = 0;
+        let startW = 0;
+        let dragging = false;
+
+        const onMouseMove = (e) => {
+            if (!dragging) return;
+            // 手柄在面板左侧：鼠标左移(负 delta) → 面板变宽
+            let newW = startW - (e.clientX - startX);
+            newW = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, newW));
+            panel.style.width = newW + 'px';
+        };
+
+        const onMouseUp = () => {
+            if (!dragging) return;
+            dragging = false;
+            handle.classList.remove('active');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        handle.addEventListener('mousedown', (e) => {
+            dragging = true;
+            startX = e.clientX;
+            startW = panel.offsetWidth;
             handle.classList.add('active');
             document.body.style.cursor = 'col-resize';
             document.body.style.userSelect = 'none';
@@ -297,6 +382,7 @@ class App {
         this.updateUI();
         this.updateStatus(`已停止，共捕获 ${this.requests.length} 条请求`);
         this.showBrowserPlaceholder(true);
+        this.updateAgentButton();
     }
 
     // ─── 实时请求增量更新 ──────────────────────────────────────────────────────
@@ -334,6 +420,7 @@ class App {
             this.statusStats.innerHTML = `
                 <span class="stat-item">请求: ${this.requests.length}</span>
             `;
+            this.updateAgentButton();
         }, 200);
     }
 
@@ -744,6 +831,327 @@ class App {
         } catch (_) {
             return String(data);
         }
+    }
+
+    // ─── Agent 面板 ────────────────────────────────────────────────────────────
+
+    /** 更新 Agent 发送按钮的可用状态（需要有已捕获请求） */
+    updateAgentButton() {
+        if (!this.btnAgentSend) return;
+        // 发送按钮：有请求数据且面板已打开时才可用
+        const panelOpen = !this.agentPanel.classList.contains('hidden');
+        this.btnAgentSend.disabled = !(this.requests.length > 0 && panelOpen);
+    }
+
+    /** 展开 Agent 面板 */
+    openAgentPanel() {
+        this.agentPanel.classList.remove('hidden');
+        this.agentResizeHandle.classList.remove('hidden');
+        this.btnAgent.classList.add('active');
+        this.btnAgentSend.disabled = this.requests.length === 0;
+    }
+
+    /** 收起 Agent 面板 */
+    closeAgentPanel() {
+        this.agentPanel.classList.add('hidden');
+        this.agentResizeHandle.classList.add('hidden');
+        this.btnAgent.classList.remove('active');
+        this.btnAgentSend.disabled = true;
+    }
+
+    /** 验证 Ollama 连接 */
+    async verifyOllama() {
+        const model = this.agentModelInput.value.trim();
+        const host  = this.agentHostInput.value.trim() || 'http://localhost:11434';
+
+        // 保存配置
+        await ipcRenderer.invoke('llm-config-save', {
+            provider: 'ollama',
+            model:    model || 'qwen2.5:7b',
+            host:     host
+        });
+
+        // 更新状态圆点为检测中
+        this.agentStatusDot.className = 'agent-status-dot checking';
+        this.agentStatusDot.title = '连接中...';
+
+        // 清除首次空状态提示
+        const emptyState = this.agentMessages.querySelector('.empty-state');
+        if (emptyState) emptyState.remove();
+
+        // 在消息区显示检测提示
+        const checkingBubble = this._appendBubble('assistant',
+            `正在连接 Ollama...\n地址：${host}\n模型：${model || 'qwen2.5:7b'}`
+        );
+
+        const result = await ipcRenderer.invoke('llm-verify');
+
+        // 移除检测提示，换成结果
+        if (checkingBubble.parentNode) checkingBubble.remove();
+
+        if (result.success) {
+            this.agentStatusDot.className = 'agent-status-dot connected';
+            const modelList = (result.models || []);
+            const modelStr  = modelList.length
+                ? modelList.map(m => `• ${m}`).join('\n')
+                : '（未发现已下载模型，请先在服务端执行 ollama pull <模型名>）';
+
+            this._appendBubble('assistant',
+                `✅ 连接成功（${result.latency_ms}ms）\n\n` +
+                `地址：${host}\n` +
+                `当前模型：${model || 'qwen2.5:7b'}\n\n` +
+                `服务端已有模型：\n${modelStr}\n\n` +
+                `捕获请求后即可点击「发送」开始分析。`
+            );
+            this.agentStatusDot.title = `已连接 · ${result.latency_ms}ms`;
+        } else {
+            this.agentStatusDot.className = 'agent-status-dot disconnected';
+            this._appendBubble('error',
+                `❌ 连接失败：${result.error}\n\n` +
+                `地址：${host}\n\n` +
+                `请检查：\n• 远端 Ollama 服务是否正在运行\n• 地址和端口是否正确\n• 防火墙是否放通了该端口`
+            );
+            this.agentStatusDot.title = '连接失败';
+        }
+    }
+
+    /** 发送用户消息，启动 Agent 推理循环 */
+    async sendAgentMessage() {
+        const text = this.agentInput.value.trim();
+        if (!text) return;
+        if (this.requests.length === 0) {
+            this._appendBubble('error', '请先捕获页面请求再进行 Agent 分析。');
+            return;
+        }
+
+        // 清空输入框，禁用发送按钮
+        this.agentInput.value = '';
+        this.btnAgentSend.disabled = true;
+
+        // 清除首次空状态提示
+        const emptyState = this.agentMessages.querySelector('.empty-state');
+        if (emptyState) emptyState.remove();
+
+        // 追加用户气泡
+        this._appendBubble('user', text);
+
+        // 追加"思考中"动画
+        const thinkingEl = this._appendThinking();
+
+        // 保存当前模型配置
+        const model = this.agentModelInput.value.trim();
+        const host  = this.agentHostInput.value.trim() || 'http://localhost:11434';
+        if (model) {
+            await ipcRenderer.invoke('llm-config-save', {
+                provider: 'ollama',
+                model:    model,
+                host:     host
+            });
+        }
+
+        // 构建历史（只取气泡内容，最近 10 条，避免 context 过长）
+        const history = this._buildMessageHistory();
+
+        await ipcRenderer.invoke('agent-chat', { message: text, history });
+
+        // 移除思考动画（会在 handleAgentStream done/error 时处理）
+        thinkingEl._remove = () => {
+            if (thinkingEl.parentNode) thinkingEl.remove();
+        };
+    }
+
+    /** 处理主进程推送的流式事件 */
+    handleAgentStream(ev) {
+        // 移除已有的思考动画
+        const removeThinking = () => {
+            const el = this.agentMessages.querySelector('.agent-thinking');
+            if (el) el.remove();
+        };
+
+        switch (ev.type) {
+            case 'capture-started':
+                // Agent 主动触发导航：同步渲染进程 UI 状态
+                removeThinking();
+                this.isAnalyzing = true;
+                this.clearResults();
+                this.urlInput.value = ev.url;
+                this.showBrowserPlaceholder(false);
+                if (this.browserCollapsed) this.toggleBrowser();
+                this.updateUI();
+                this.updateStatus('Agent 正在抓包中...');
+                this._removeProgressBubble();
+                this._appendBubble('assistant', `🌐 正在打开 ${ev.url}`);
+                break;
+
+            case 'progress':
+                // 抓包等待期间的实时进度（复用同一个进度气泡，避免刷屏）
+                this._upsertProgressBubble(ev.message);
+                this.updateStatus(`抓包中：${ev.message}`);
+                break;
+
+            case 'thinking':
+                // 每轮 LLM 推理开始前：清理进度气泡，显示思考动画
+                this._removeProgressBubble();
+                removeThinking();
+                this._appendThinking(ev.round);
+                break;
+
+            case 'text':
+                removeThinking();
+                if (ev.content && ev.content.trim()) {
+                    this._appendBubble('assistant', ev.content);
+                }
+                break;
+
+            case 'tool_step':
+                removeThinking();
+                this._appendToolCard(ev);
+                break;
+
+            case 'done':
+                removeThinking();
+                this._removeProgressBubble();
+                // 若是 Agent 触发的抓包会话，分析完成后自动停止抓包
+                if (this.isAnalyzing) {
+                    this.isAnalyzing = false;
+                    this.updateUI();
+                    this.updateStatus(`分析完成，共捕获 ${this.requests.length} 条请求`);
+                }
+                this.btnAgentSend.disabled = false;
+                this.agentInput.focus();
+                break;
+
+            case 'error':
+                removeThinking();
+                this._removeProgressBubble();
+                this._appendBubble('error', ev.message || '发生未知错误');
+                if (this.isAnalyzing) {
+                    this.isAnalyzing = false;
+                    this.updateUI();
+                }
+                this.btnAgentSend.disabled = false;
+                break;
+        }
+    }
+
+    /** 创建或更新进度气泡（保持单一，避免刷屏） */
+    _upsertProgressBubble(message) {
+        let el = this.agentMessages.querySelector('.agent-progress-bubble');
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'agent-bubble assistant agent-progress-bubble';
+            this.agentMessages.appendChild(el);
+        }
+        el.textContent = `⏳ ${message}`;
+        this._scrollAgentToBottom();
+    }
+
+    /** 移除进度气泡 */
+    _removeProgressBubble() {
+        const el = this.agentMessages.querySelector('.agent-progress-bubble');
+        if (el) el.remove();
+    }
+
+    /** 追加文本气泡 */
+    _appendBubble(role, content) {
+        const div = document.createElement('div');
+        div.className = `agent-bubble ${role}`;
+        div.textContent = content;
+        this.agentMessages.appendChild(div);
+        this._scrollAgentToBottom();
+        return div;
+    }
+
+    /** 追加工具调用卡片（可折叠 details） */
+    _appendToolCard(ev) {
+        const toolLabels = {
+            navigate_and_capture:      '打开页面并抓包',
+            identify_list_apis:        '识别列表接口',
+            analyze_encryption_params: '检测加密参数',
+            get_request_detail:        '获取请求详情',
+            get_js_sources:            '列举 JS 文件',
+            generate_solution_script:  '生成复现脚本'
+        };
+        const label = toolLabels[ev.toolName] || ev.toolName;
+
+        const details = document.createElement('details');
+        details.className = 'agent-tool-card';
+
+        // 结果摘要（一行文字）
+        let summary1Line = '';
+        if (ev.result && !ev.result.error) {
+            if (ev.toolName === 'navigate_and_capture') {
+                summary1Line = `捕获 ${ev.result.captured} 条请求`;
+            } else if (ev.toolName === 'identify_list_apis') {
+                summary1Line = `找到 ${ev.result.count} 个候选接口`;
+            } else if (ev.toolName === 'analyze_encryption_params') {
+                summary1Line = `检测到 ${(ev.result.encrypted_params || []).length} 个加密参数`;
+            } else if (ev.toolName === 'get_js_sources') {
+                summary1Line = `共 ${ev.result.count} 个 JS 文件`;
+            } else if (ev.toolName === 'generate_solution_script') {
+                summary1Line = '脚本生成成功';
+            } else {
+                summary1Line = '完成';
+            }
+        } else if (ev.result?.error) {
+            summary1Line = `错误: ${ev.result.error}`;
+        }
+
+        details.innerHTML = `
+            <summary>
+                <span>🔧</span>
+                <span class="tool-name">${this.escapeHtml(label)}</span>
+                <span style="color:var(--text-muted);font-size:11px;flex:1;margin-left:4px">${this.escapeHtml(summary1Line)}</span>
+                <span class="tool-elapsed">${ev.elapsed_ms}ms</span>
+            </summary>
+            <div class="agent-tool-body">
+                <div class="agent-tool-section-label">输入参数</div>
+                <pre>${this.escapeHtml(JSON.stringify(ev.input, null, 2))}</pre>
+                <div class="agent-tool-section-label" style="margin-top:6px">返回结果</div>
+                <pre>${this.escapeHtml(JSON.stringify(ev.result, null, 2))}</pre>
+            </div>
+        `;
+
+        this.agentMessages.appendChild(details);
+        this._scrollAgentToBottom();
+        return details;
+    }
+
+    /** 追加"思考中"动画，round 为当前推理轮次（可选） */
+    _appendThinking(round) {
+        const div = document.createElement('div');
+        div.className = 'agent-thinking';
+        const label = round && round > 1 ? `第 ${round} 轮推理中...` : '思考中...';
+        div.innerHTML = `
+            <div class="agent-thinking-dot"></div>
+            <div class="agent-thinking-dot"></div>
+            <div class="agent-thinking-dot"></div>
+            <span style="margin-left:4px;font-size:11px">${label}</span>
+        `;
+        this.agentMessages.appendChild(div);
+        this._scrollAgentToBottom();
+        return div;
+    }
+
+    /** 滚动消息区到底部 */
+    _scrollAgentToBottom() {
+        this.agentMessages.scrollTop = this.agentMessages.scrollHeight;
+    }
+
+    /**
+     * 从 DOM 中提取最近的对话历史（最多 10 条），
+     * 用于多轮对话时向主进程传递上下文
+     */
+    _buildMessageHistory() {
+        const bubbles = this.agentMessages.querySelectorAll('.agent-bubble:not(.error)');
+        const history = [];
+        bubbles.forEach(b => {
+            const role = b.classList.contains('user') ? 'user' : 'assistant';
+            const content = b.textContent.trim();
+            if (content) history.push({ role, content });
+        });
+        // 只保留最近 10 条（避免 context 过长）
+        return history.slice(-10);
     }
 }
 

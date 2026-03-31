@@ -14,6 +14,7 @@
                 <span class="logo-text">Auto Reverser</span>
             </div>
             <div class="header-actions">
+                <button id="btn-agent" class="btn btn-secondary">🤖 Agent</button>
                 <button id="btn-export" class="btn btn-secondary" disabled>导出报告</button>
                 <button id="btn-theme" class="btn-theme" title="切换白天/黑夜模式">
                     <span class="theme-icon">🌙</span>
@@ -24,107 +25,145 @@
         </header>
 
         <main class="main-content">
-            <section class="url-input-section">
-                <div class="input-group">
-                    <input type="text" id="url-input" class="url-input" 
-                           placeholder="输入要分析的网站URL，例如: https://weibo.com/..." 
-                           autocomplete="off">
-                    <button id="btn-start" class="btn btn-primary">
-                        <span class="btn-text">开始分析</span>
-                        <span class="btn-loading hidden">分析中...</span>
-                    </button>
-                    <button id="btn-stop" class="btn btn-danger hidden">停止</button>
-                </div>
-                <div class="input-options">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="opt-intercept-xhr" checked>
-                        拦截XHR/Fetch请求
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="opt-analyze-encryption" checked>
-                        自动分析加密参数
-                    </label>
-                </div>
-            </section>
+            <!-- 左侧主列：URL 输入 + 浏览器 + 分析面板 -->
+            <div class="main-col">
+                <section class="url-input-section">
+                    <div class="input-group">
+                        <input type="text" id="url-input" class="url-input" 
+                               placeholder="输入要分析的网站URL，例如: https://weibo.com/..." 
+                               autocomplete="off">
+                        <button id="btn-start" class="btn btn-primary">
+                            <span class="btn-text">开始分析</span>
+                            <span class="btn-loading hidden">分析中...</span>
+                        </button>
+                        <button id="btn-stop" class="btn btn-danger hidden">停止</button>
+                    </div>
+                    <div class="input-options">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="opt-intercept-xhr" checked>
+                            拦截XHR/Fetch请求
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="opt-analyze-encryption" checked>
+                            自动分析加密参数
+                        </label>
+                    </div>
+                </section>
 
-            <section class="browser-section" id="browser-section">
-                <div class="browser-toolbar">
-                    <div class="browser-nav-buttons">
-                        <button id="btn-back" class="btn-nav" disabled>◀</button>
-                        <button id="btn-forward" class="btn-nav" disabled>▶</button>
-                        <button id="btn-refresh" class="btn-nav">🔄</button>
+                <section class="browser-section" id="browser-section">
+                    <div class="browser-toolbar">
+                        <div class="browser-nav-buttons">
+                            <button id="btn-back" class="btn-nav" disabled>◀</button>
+                            <button id="btn-forward" class="btn-nav" disabled>▶</button>
+                            <button id="btn-refresh" class="btn-nav">🔄</button>
+                        </div>
+                        <div class="browser-url-bar">
+                            <span id="browser-current-url">about:blank</span>
+                        </div>
+                        <div class="browser-actions">
+                            <button id="btn-devtools" class="btn btn-small">开发者工具</button>
+                            <button id="btn-toggle-browser" class="btn btn-small btn-icon-small" title="折叠/展开浏览器">▼</button>
+                        </div>
                     </div>
-                    <div class="browser-url-bar">
-                        <span id="browser-current-url">about:blank</span>
+                    <div id="browser-container" class="browser-container">
+                        <div class="browser-placeholder">
+                            <p>输入URL并点击"开始分析"来加载网页</p>
+                        </div>
                     </div>
-                    <div class="browser-actions">
-                        <button id="btn-devtools" class="btn btn-small">开发者工具</button>
-                        <button id="btn-toggle-browser" class="btn btn-small btn-icon-small" title="折叠/展开浏览器">▼</button>
-                    </div>
-                </div>
-                <div id="browser-container" class="browser-container">
-                    <div class="browser-placeholder">
-                        <p>输入URL并点击"开始分析"来加载网页</p>
-                    </div>
-                </div>
-            </section>
+                </section>
 
-            <div id="browser-resize-handle" class="browser-resize-handle">
-                <div class="resize-handle-bar"></div>
+                <div id="browser-resize-handle" class="browser-resize-handle">
+                    <div class="resize-handle-bar"></div>
+                </div>
+
+                <section class="analysis-section">
+                    <div class="panel-container" id="panel-container">
+                        <div class="panel requests-panel" id="requests-panel">
+                            <div class="panel-header">
+                                <div class="panel-header-row">
+                                    <h3>请求列表 <span id="request-count" class="count-badge">0</span></h3>
+                                    <div class="panel-filters">
+                                        <button class="filter-btn active" data-filter="all">全部</button>
+                                        <button class="filter-btn" data-filter="api">API</button>
+                                        <button class="filter-btn" data-filter="xhr">XHR</button>
+                                        <button class="filter-btn" data-filter="encrypted">加密</button>
+                                    </div>
+                                </div>
+                                <div class="panel-search">
+                                    <input type="text" id="request-search" class="search-input" placeholder="搜索 URL...">
+                                </div>
+                            </div>
+                            <div class="panel-content">
+                                <div id="requests-list" class="requests-list">
+                                    <div class="empty-state">
+                                        <p>等待捕获网络请求...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="panels-resize-handle" class="panels-resize-handle">
+                            <div class="panels-resize-bar"></div>
+                        </div>
+
+                        <div class="panel detail-panel">
+                            <div class="panel-header">
+                                <div class="panel-header-row">
+                                    <h3>请求详情</h3>
+                                    <div class="panel-filters">
+                                        <button id="btn-copy-request" class="filter-btn" disabled>复制</button>
+                                        <button id="btn-replay-request" class="filter-btn" disabled>重放</button>
+                                    </div>
+                                </div>
+                                <div class="panel-header-row detail-tabs-row hidden" id="detail-tabs-container">
+                                </div>
+                            </div>
+                            <div class="panel-content">
+                                <div id="request-detail" class="request-detail">
+                                    <div class="empty-state">
+                                        <p>选择一个请求查看详情</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
             </div>
 
-            <section class="analysis-section">
-                <div class="panel-container" id="panel-container">
-                    <div class="panel requests-panel" id="requests-panel">
-                        <div class="panel-header">
-                            <div class="panel-header-row">
-                                <h3>请求列表 <span id="request-count" class="count-badge">0</span></h3>
-                                <div class="panel-filters">
-                                    <button class="filter-btn active" data-filter="all">全部</button>
-                                    <button class="filter-btn" data-filter="api">API</button>
-                                    <button class="filter-btn" data-filter="xhr">XHR</button>
-                                    <button class="filter-btn" data-filter="encrypted">加密</button>
-                                </div>
-                            </div>
-                            <div class="panel-search">
-                                <input type="text" id="request-search" class="search-input" placeholder="搜索 URL...">
-                            </div>
-                        </div>
-                        <div class="panel-content">
-                            <div id="requests-list" class="requests-list">
-                                <div class="empty-state">
-                                    <p>等待捕获网络请求...</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+            <!-- Agent 侧边栏拖拽手柄（随面板一起显示/隐藏） -->
+            <div id="agent-resize-handle" class="agent-sidebar-handle hidden">
+                <div class="panels-resize-bar"></div>
+            </div>
 
-                    <div id="panels-resize-handle" class="panels-resize-handle">
-                        <div class="panels-resize-bar"></div>
+            <!-- Agent 全高侧边栏（默认隐藏） -->
+            <div id="agent-panel" class="agent-panel hidden">
+                <div class="panel-header">
+                    <div class="panel-header-row">
+                        <h3>🤖 Agent 分析</h3>
+                        <button id="btn-agent-close" class="filter-btn" title="关闭面板">✕</button>
                     </div>
-
-                    <div class="panel detail-panel">
-                        <div class="panel-header">
-                            <div class="panel-header-row">
-                                <h3>请求详情</h3>
-                                <div class="panel-filters">
-                                    <button id="btn-copy-request" class="filter-btn" disabled>复制</button>
-                                    <button id="btn-replay-request" class="filter-btn" disabled>重放</button>
-                                </div>
-                            </div>
-                            <div class="panel-header-row detail-tabs-row hidden" id="detail-tabs-container">
-                            </div>
-                        </div>
-                        <div class="panel-content">
-                            <div id="request-detail" class="request-detail">
-                                <div class="empty-state">
-                                    <p>选择一个请求查看详情</p>
-                                </div>
-                            </div>
-                        </div>
+                    <div class="panel-header-row agent-config-row">
+                        <span class="agent-status-dot" id="agent-status-dot" title="未连接"></span>
+                        <input id="agent-host" class="search-input agent-model-input"
+                               placeholder="Ollama 地址，如 http://192.168.1.10:11434">
+                    </div>
+                    <div class="panel-header-row agent-config-row">
+                        <input id="agent-model" class="search-input agent-model-input"
+                               placeholder="模型名，如 qwen2.5:7b" style="flex:1">
+                        <button id="btn-agent-verify" class="filter-btn">连接</button>
                     </div>
                 </div>
-            </section>
+                <div class="panel-content agent-messages" id="agent-messages">
+                    <div class="empty-state">
+                        <p>输入问题后点击发送，Agent 将自动分析已捕获的请求</p>
+                    </div>
+                </div>
+                <div class="agent-input-row">
+                    <textarea id="agent-input" class="search-input agent-textarea"
+                              placeholder="例：分析列表页接口，找出签名参数并给出复现方案"></textarea>
+                    <button id="btn-agent-send" class="filter-btn active" disabled>发送</button>
+                </div>
+            </div>
         </main>
 
         <footer class="footer">

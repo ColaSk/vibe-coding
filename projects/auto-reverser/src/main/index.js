@@ -5,6 +5,9 @@ const { CDPInterceptor } = require('../core/cdp-interceptor');
 const { APIAnalyzer } = require('../core/analyzer');
 const { EncryptionAnalyzer } = require('../core/encryption');
 const { EncryptionCracker } = require('../core/cracker');
+const { OllamaProvider } = require('../core/ollama-provider');
+const { ToolRegistry }   = require('../core/tool-registry');
+const { LLMAgent }       = require('../core/llm-agent');
 const Store = require('electron-store');
 
 const store = new Store();
@@ -15,6 +18,7 @@ let cdpInterceptor = null;
 let apiAnalyzer = null;
 let encryptionAnalyzer = null;
 let encryptionCracker = null;
+let currentAgent = null;
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -207,6 +211,75 @@ function setupIPC() {
     ipcMain.handle('show-browser', async () => {
         if (browserView) {
             updateBrowserViewBounds();
+        }
+    });
+
+    // ─── Agent IPC ───────────────────────────────────────────────────────────
+
+    ipcMain.handle('agent-chat', async (event, { message, history }) => {
+        try {
+            const config = store.get('llmConfig') || {};
+            const provider = new OllamaProvider(config);
+
+            const stream = (ev) => {
+                if (!mainWindow || mainWindow.isDestroyed()) return;
+                mainWindow.webContents.send('agent-stream', ev);
+            };
+
+            const registry = new ToolRegistry(
+                cdpInterceptor, apiAnalyzer, encryptionAnalyzer, encryptionCracker,
+                {
+                    // Agent 主动导航：通知渲染进程同步 UI，然后启动抓包
+                    navigateCallback: async (url) => {
+                        stream({ type: 'capture-started', url });
+                        await startAnalysis(url);
+                    },
+                    // 等待期间实时推送进度给 UI
+                    progressCallback: (message, count) => {
+                        stream({ type: 'progress', message, count });
+                    }
+                }
+            );
+
+            currentAgent = new LLMAgent(provider, registry, stream);
+            // 异步运行，不 await，立即返回让 UI 开始监听流
+            currentAgent.chat(message, history || []);
+            return { success: true };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('agent-stop', () => {
+        if (currentAgent) currentAgent.stop();
+        return { stopped: true };
+    });
+
+    ipcMain.handle('llm-config-save', (event, config) => {
+        store.set('llmConfig', config);
+        return true;
+    });
+
+    ipcMain.handle('llm-config-get', () => {
+        const c = store.get('llmConfig') || {};
+        return {
+            provider:    c.provider    || 'ollama',
+            model:       c.model       || 'qwen2.5:7b',
+            host:        c.host        || 'http://localhost:11434',
+            maxRounds:   c.maxRounds   || 10,
+            temperature: c.temperature || 0.2
+        };
+    });
+
+    ipcMain.handle('llm-verify', async () => {
+        try {
+            const config   = store.get('llmConfig') || {};
+            const provider = new OllamaProvider(config);
+            const start    = Date.now();
+            const result   = await provider.verify();
+            return { ...result, latency_ms: Date.now() - start };
+        } catch (err) {
+            return { success: false, error: err.message };
         }
     });
 }

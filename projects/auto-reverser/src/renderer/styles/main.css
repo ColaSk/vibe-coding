@@ -221,6 +221,17 @@ body {
     flex: 1;
     overflow: hidden;
     display: flex;
+    flex-direction: row;
+    gap: 0;
+    min-height: 0;
+}
+
+/* 左侧主列：URL 输入 + 浏览器 + 分析面板 */
+.main-col {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
     flex-direction: column;
     padding: 20px;
     gap: 20px;
@@ -428,6 +439,7 @@ browser-view {
 .analysis-section {
     flex: 1;
     overflow: hidden;
+    min-height: 180px;
 }
 
 .panel-container {
@@ -961,6 +973,215 @@ browser-view {
     padding: 15px 20px;
     border-top: 1px solid var(--border-color);
 }
+
+/* ── Agent 全高侧边栏 ─────────────────────────────────────────────── */
+
+/* 侧边栏拖拽手柄（竖向） */
+.agent-sidebar-handle {
+    width: 6px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: col-resize;
+    background-color: var(--border-color);
+    transition: background-color 0.15s;
+    z-index: 10;
+}
+
+.agent-sidebar-handle:hover,
+.agent-sidebar-handle.active {
+    background-color: var(--accent-primary);
+}
+
+/* Agent 侧边栏面板 */
+.agent-panel {
+    width: 360px;
+    min-width: 260px;
+    max-width: 640px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--bg-secondary);
+    border-left: 1px solid var(--border-color);
+    overflow: hidden;
+}
+
+.agent-config-row {
+    gap: 6px;
+    padding-top: 0;
+    padding-bottom: 8px;
+}
+
+.agent-model-input {
+    flex: 1;
+    min-width: 0;
+}
+
+/* 连接状态指示点 */
+.agent-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background-color: var(--text-muted);
+    transition: background-color 0.3s;
+}
+.agent-status-dot.connected    { background-color: var(--accent-success); }
+.agent-status-dot.disconnected { background-color: var(--accent-primary); }
+.agent-status-dot.checking     { background-color: var(--accent-warning);
+                                  animation: pulse 1s infinite; }
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+}
+
+/* 消息区域 */
+.agent-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+}
+
+/* 气泡 */
+.agent-bubble {
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.6;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.agent-bubble.user {
+    background-color: var(--accent-primary);
+    color: #fff;
+    align-self: flex-end;
+    max-width: 90%;
+    border-bottom-right-radius: 3px;
+}
+
+.agent-bubble.assistant {
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    align-self: flex-start;
+    max-width: 100%;
+    border-bottom-left-radius: 3px;
+}
+
+.agent-bubble.error {
+    background-color: var(--status-5xx-bg);
+    border: 1px solid var(--accent-primary);
+    color: var(--status-5xx-text);
+}
+
+/* 工具调用卡片 */
+.agent-tool-card {
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--accent-primary);
+    border-radius: 4px;
+    overflow: hidden;
+    font-size: 12px;
+}
+
+.agent-tool-card summary {
+    cursor: pointer;
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-secondary);
+    user-select: none;
+    list-style: none;
+}
+
+.agent-tool-card summary::-webkit-details-marker { display: none; }
+
+.agent-tool-card summary .tool-name {
+    font-weight: 600;
+    color: var(--accent-primary);
+}
+
+.agent-tool-card summary .tool-elapsed {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.agent-tool-body {
+    padding: 8px 10px;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+.agent-tool-body pre {
+    margin: 4px 0;
+    font-family: 'Monaco', 'Menlo', monospace;
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.5;
+    color: var(--text-primary);
+    max-height: 200px;
+    overflow: auto;
+}
+
+.agent-tool-section-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 3px;
+}
+
+/* 输入区域 */
+.agent-input-row {
+    display: flex;
+    gap: 6px;
+    padding: 10px 0 0;
+    flex-shrink: 0;
+    align-items: flex-end;
+}
+
+.agent-textarea {
+    flex: 1;
+    height: 62px;
+    resize: none;
+    line-height: 1.5;
+    padding: 8px 10px;
+}
+
+/* 正在思考动画 */
+.agent-thinking {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 10px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.agent-thinking-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--accent-primary);
+    animation: thinking-bounce 1.2s infinite;
+}
+.agent-thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.agent-thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes thinking-bounce {
+    0%, 80%, 100% { transform: translateY(0);    opacity: 0.4; }
+    40%           { transform: translateY(-5px); opacity: 1;   }
+}
+
+/* ── 滚动条 ───────────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar {
     width: 8px;
