@@ -1,6 +1,7 @@
 # Trae IDE files
 .trae/
 .vscode/
+.cursor/
 
 # Python
 # Byte-compiled / optimized / DLL files
