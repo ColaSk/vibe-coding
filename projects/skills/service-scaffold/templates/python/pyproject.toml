@@ -1,0 +1,32 @@
+[project]
+name = "{{project}}"
+version = "0.1.0"
+description = "{{title}}"
+requires-python = ">=3.12"
+dependencies = [
+    "aio-pika>=9",
+    "aiokafka>=0.12",
+    "asyncmy>=0.2",
+    "fastapi[standard]>=0.115",
+    "pydantic-settings>=2.6",
+    "redis>=5",
+    "sqlalchemy[asyncio]>=2",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "pytest>=8",
+    "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

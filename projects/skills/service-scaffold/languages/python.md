@@ -1,0 +1,89 @@
+# Python / FastAPI
+
+## 标识与触发词
+
+- id：`python`
+- 触发：FastAPI、Python HTTP 服务、给这种服务接 MySQL、Redis、Kafka、RabbitMQ
+
+## 运行时与命令
+
+- Python `>=3.12`，依赖由 `uv` 安装。
+- 框架：FastAPI。入口是 `app/main.py` 的 `create_app()`，模块级实例名叫 `app`。
+- 导入包永远是 `app`，不随项目名变化。
+- 生成：
+
+```bash
+python3 scripts/render_python.py \
+  --dest "<目标目录>" \
+  --project "<项目名>" \
+  --title "<服务标题>" \
+  --enable "<mysql,redis,kafka,rabbitmq 的子集>"
+```
+
+- 检查：`uv sync`、`uv run ruff check .`、`uv run pytest`。有 Docker 时加 `docker compose config`。
+- 本地启动：`uv run fastapi dev app/main.py`。
+- 容器：`docker compose up --build`。某个后端再加 `--profile mysql` 这类同名 profile。
+
+## 必填输入与命名
+
+- 项目名：`^[a-z][a-z0-9_]*$`，同时作为目录名和 `[project].name`。
+- 服务标题：一行人类可读文字，写入 `Settings.title`，默认等于项目名。
+- 模块和函数用 snake_case：`read_health`、`read_ready`、`read_hello`、`get_db`。
+- 类用 PascalCase：`Settings`、`HelloResponse`。
+- 环境变量用 SCREAMING_SNAKE。
+
+MySQL 沿用官方模板拆开的字段：`MYSQL_SERVER`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DB`。Redis 用 `REDIS_HOST`、`REDIS_PORT`。Kafka 用 `KAFKA_BOOTSTRAP_SERVERS`。RabbitMQ 用 `RABBITMQ_HOST`、`RABBITMQ_PORT`、`RABBITMQ_USER`、`RABBITMQ_PASSWORD`。
+
+## 文件映射
+
+`templates/python/` 复制到目标目录。三个无点文件名在复制时改名：`gitignore` → `.gitignore`，`dockerignore` → `.dockerignore`，`env.example` → `.env.example`。
+
+```
+app/main.py                      # create_app、模块级 app
+app/api/main.py                  # 聚合 /api/v1 路由
+app/api/deps.py                  # get_db、get_redis、get_kafka、get_rabbitmq
+app/api/routes/health.py         # GET /health、GET /ready
+app/api/routes/hello.py          # GET /api/v1/hello
+app/core/config.py               # Settings
+app/core/lifespan.py             # 按开关 connect / disconnect
+app/core/db.py                   # MySQL
+app/core/redis.py                # Redis
+app/core/kafka.py                # Kafka
+app/core/rabbitmq.py             # RabbitMQ
+app/schemas/hello.py             # HelloResponse
+app/services/hello.py            # build_hello
+tests/api/                       # 探针、hello、关闭时的依赖
+tests/core/                      # lifespan 钩子
+Dockerfile
+compose.yml
+pyproject.toml
+```
+
+业务路由前缀是 `/api/v1`。探针不带这个前缀。
+
+## 占位符
+
+只替换两个：
+
+- `{{project}}`：项目名
+- `{{title}}`：服务标题
+
+`.env` 不从模板原样保留，渲染脚本按 `--enable` 重写开关。未出现在 `--enable` 里的后端保持 `false`。
+
+## 后端行为
+
+依赖始终安装：`fastapi[standard]`、`pydantic-settings`、`sqlalchemy[asyncio]`、`asyncmy`、`redis`、`aiokafka`、`aio-pika`。开发依赖：`pytest`、`ruff`、`httpx`。
+
+开关为 `False` 时不调用对应的 `connect`。`GET /v1/hello` 的实现函数是 `read_hello`，它只调用 `build_hello`，不取数据库或消息连接。
+
+`app/core/db.py` 的 `ping` 执行 `SELECT 1`。不生成表、模型或迁移。Redis 的 `ping` 执行 `PING`。Kafka 使用 `aiokafka` producer，compose profile 是单节点 KRaft 的 `apache/kafka`，不带 ZooKeeper。RabbitMQ 使用 `aio-pika`，镜像是 `rabbitmq:3-management`。
+
+## 完成标准
+
+在生成目录中，下面的命令退出码都是 0：
+
+- `uv sync`
+- `uv run ruff check .`
+- `uv run pytest`
+
+有 `docker` 可执行文件时，`docker compose config` 也必须是 0。

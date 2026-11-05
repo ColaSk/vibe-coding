@@ -12,7 +12,7 @@ vibe-coding/
 │   ├── littleagent/      # 极简 Agent 框架（设计定稿，按路线实现）
 │   ├── auto-reverser/    # Electron 浏览器自动逆向
 │   ├── vibe-vue/         # Vue 3 + Vite 前端实验
-│   └── skills/           # Agent Skills（当前：tech-research）
+│   └── skills/           # Agent Skills（tech-research、service-scaffold）
 ├── docs/                 # 调研、对比、设计概览
 └── README.md
 ```
@@ -62,6 +62,10 @@ npm run lint && npm run lint:style && npm run format
 ### skills/tech-research
 
 技术调研 Skill：对比、深度调研、选型评估、全景扫描四种模式，输出结构化中文文档。`docs/` 里多数调研笔记按这套流程写成。
+
+### skills/service-scaffold
+
+服务脚手架 Skill：新建 HTTP 服务。当前语言是 Python/FastAPI，MySQL、Redis、Kafka、RabbitMQ 放在 `app/core`，用 `*_ENABLED` 开关插拔，并用同名 Docker Compose profile 启动对应后端。
 
 ## 文档
 
