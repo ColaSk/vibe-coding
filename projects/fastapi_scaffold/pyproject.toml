@@ -1,0 +1,87 @@
+[project]
+name = "fastapi_scaffold"
+version = "0.1.0"
+description = "fastapi-scaffold"
+requires-python = ">=3.12"
+dependencies = [
+    "aio-pika>=9",
+    "aiokafka>=0.12",
+    "asyncmy>=0.2",
+    "fastapi[standard]>=0.115",
+    "pydantic-settings>=2.6",
+    "redis>=5",
+    "sqlalchemy[asyncio]>=2",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "import-linter>=2.1",
+    "mypy>=1.13",
+    "pytest>=8",
+    "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["app", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["aiokafka", "aiokafka.*"]
+ignore_missing_imports = true
+
+[tool.importlinter]
+root_packages = ["app"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Schemas are a leaf"
+type = "forbidden"
+source_modules = ["app.schemas"]
+forbidden_modules = ["app.api", "app.services", "app.core"]
+
+[[tool.importlinter.contracts]]
+name = "Services stay free of HTTP and infrastructure"
+type = "forbidden"
+source_modules = ["app.services"]
+forbidden_modules = ["app.api", "app.core", "fastapi"]
+
+[[tool.importlinter.contracts]]
+name = "Core does not import the HTTP surface or services"
+type = "forbidden"
+source_modules = ["app.core"]
+forbidden_modules = ["app.api", "app.services"]
+
+[[tool.importlinter.contracts]]
+name = "Infrastructure modules are independent"
+type = "independence"
+modules = [
+    "app.core.db",
+    "app.core.redis",
+    "app.core.kafka",
+    "app.core.rabbitmq",
+]
+
+[[tool.importlinter.contracts]]
+name = "Routes do not import infrastructure modules"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["app.api.routes"]
+forbidden_modules = [
+    "app.core.db",
+    "app.core.redis",
+    "app.core.kafka",
+    "app.core.rabbitmq",
+]
