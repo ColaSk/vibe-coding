@@ -1,13 +1,9 @@
 # 后端插拔
 
-一个后端由三处接上：
+一条连接有自己的名字、开关和配置。MySQL、Redis、Kafka、RabbitMQ 各自有一个连接类，客户端记在实例上。`open` 在第一次调用时建立客户端。多个协程可以同时 `open`：MySQL 每次借出新的会话，另外三种返回同一个客户端。
 
-- 配置里的开关，以及连接所需的字段。
-- `app.core` 里的模块，提供 `connect`、`disconnect`、`ping`。
-- `app.api.deps` 里对应的 `get_*`，把连接交给路由。
+默认四条名字是 `db`、`redis`、`kafka`、`rabbitmq`，分别对应原来的 `MYSQL_*`、`REDIS_*`、`KAFKA_*`、`RABBITMQ_*`。同一种要再加一条时，用双下划线写下名字，例如 `MYSQL__ANALYTICS__ENABLED` 和 `MYSQL__ANALYTICS__SERVER`。名字在全部连接里必须唯一。
 
-开关为假时，lifespan 不调用这个模块的 `connect`。`get_*` 返回 503，响应体是失败信封，说明该后端已关闭。开关为真但应用状态里还没有连接时，同样返回 503，说明该后端不可用。
+开关为假时，按名字取连接会返回 503，响应体是失败信封，说明该连接已关闭。各基础设施模块互不 import。连接不放在 FastAPI 应用对象上。
 
-lifespan 按登记顺序启动已启用的后端，并按实际启动顺序的逆序关闭。各基础设施模块互不 import。
-
-MySQL、Redis、Kafka、RabbitMQ 是这个模式的现有实例。新增同类后端时沿用同一组接缝。
+`get_db`、`get_redis`、`get_kafka`、`get_rabbitmq` 是默认名字的简写。数据库用 `get_db_connection(名字)` 借出会话，另外三种用同名的 `get_*_connection(名字)`。
