@@ -1,6 +1,6 @@
 # 契约
 
-语言包和 Python 后端模块都按本节扩展。agent 只读这一层，不要再跳到更深的文档。
+语言包和 Python 后端模块都按本节扩展。agent 只读这一层，不要再跳到更深的文档。生成出的项目里，机制说明在 `harness/docs/`，约束在 `AGENTS.md`。改机制时先改对应文档，再改代码。
 
 ## 语言包
 
@@ -21,32 +21,40 @@
 
 已有模块：
 
-| 模块 | `app.state` 属性 | 开关 |
-|------|------------------|------|
-| `app/core/db.py` | `db` | `MYSQL_ENABLED` |
-| `app/core/redis.py` | `redis` | `REDIS_ENABLED` |
-| `app/core/kafka.py` | `kafka` | `KAFKA_ENABLED` |
-| `app/core/rabbitmq.py` | `rabbitmq` | `RABBITMQ_ENABLED` |
+| 模块 | 连接类 | 默认名字 | 开关 |
+|------|--------|----------|------|
+| `app/core/db.py` | `Database` | `db` | `MYSQL_ENABLED` |
+| `app/core/redis.py` | `RedisConnection` | `redis` | `REDIS_ENABLED` |
+| `app/core/kafka.py` | `KafkaConnection` | `kafka` | `KAFKA_ENABLED` |
+| `app/core/rabbitmq.py` | `RabbitMQConnection` | `rabbitmq` | `RABBITMQ_ENABLED` |
 
-每个后端模块提供三个异步函数：
+连接不放在 FastAPI 应用对象上，也不在进程启动时统一建连。每个连接类保存自己的客户端。`open` 第一次调用时建立客户端，并留在实例上。MySQL 每次 `open` 借出新的会话；另外三种返回同一个客户端。多个协程可以同时 `open`。
 
-- `connect(settings)`：建立连接并返回连接对象。开关为 `False` 时不会被调用。
-- `disconnect(client)`：关闭 `connect` 返回的对象。
-- `ping(client)`：失败时抛异常。`GET /ready` 捕获异常并返回 503。
+`Settings` 把原来的扁平环境变量挂成默认名字，再用 `env_nested_delimiter="__"` 接收同一种的额外连接，例如 `MYSQL__ANALYTICS__ENABLED`。全部连接名字必须唯一。
 
-`app/core/lifespan.py` 按登记顺序调用 `connect`，关闭时逆序调用 `disconnect`。连接对象放在 `app.state` 的上表属性上。
+`app/api/deps.py` 提供默认名字的 `get_db`、`get_redis`、`get_kafka`、`get_rabbitmq`，以及 `get_*_connection(名字)`。对应开关为 `False`，或没有这个名字时，依赖抛出 `HTTPException(status_code=503)`。路由不要直接 import 某一个后端模块来建连。503 和其他错误一样走失败信封。
 
-`app/api/deps.py` 提供 `get_db`、`get_redis`、`get_kafka`、`get_rabbitmq`。对应开关为 `False`，或 `app.state` 上还没有连接时，依赖抛出 `HTTPException(status_code=503)`。路由不要直接 import 某一个后端模块来建连。
+`GET /health` 和 `GET /ready` 都不探后端。存活返回 `{"status": "ok"}`，就绪返回 `{"status": "ready"}`。
 
-`GET /health` 不探后端。`GET /ready` 只对开关为 `True` 的模块调用 `ping`。失败响应写明模块名（`db`、`redis`、`kafka`、`rabbitmq`）。四个开关都关着时 ready 直接成功。
+每个连接类还提供：
+
+- `startup()`：建立客户端。
+- `shutdown()`：关闭客户端。
+- `ping()`：失败时抛异常。探针当前不调用它。
 
 新增一种后端时：
 
-1. 在 `app/core/` 增加 snake_case 模块，实现 `connect`、`disconnect`、`ping`。
-2. 在 `Settings` 增加 `*_ENABLED` 以及该后端自己的连接字段。字段用 SCREAMING_SNAKE 环境变量。
-3. 在 `lifespan.py` 登记模块、状态属性名和开关。
-4. 在 `app/api/deps.py` 增加 `get_*`。
-5. 在 `compose.yml` 增加同名 profile 和 healthcheck，并让 `app` 以 `required: false` 依赖它。
-6. 依赖写进 `pyproject.toml`。不要因为开关默认关闭就删掉依赖。
+1. 在 `app/core/` 增加 snake_case 模块，实现连接类和按名字取实例的函数。各基础设施模块互不 import。
+2. 在 `Settings` 增加该后端自己的嵌套配置、默认 `*_ENABLED` 和连接字段。字段用 SCREAMING_SNAKE 环境变量。
+3. 在 `app/api/deps.py` 增加 `get_*` 和 `get_*_connection`。
+4. 在 `compose.yml` 增加同名 profile 和 healthcheck，并让 `app` 以 `required: false` 依赖它。
+5. 依赖写进 `pyproject.toml`。不要因为开关默认关闭就删掉依赖。
+6. 把新模块加进 import-linter 的基础设施独立契约，以及「路由不直接 import 基础设施」契约。
 
-不改 `create_app()` 的形状：它仍然只创建 `FastAPI`、挂上 lifespan、挂上 `/health` 与 `/ready`，并把业务路由挂到 `/api/v1`。
+不改 `create_app()` 的形状：它读取配置、注册异常处理、挂上请求上下文中间件、挂上不带前缀的探针，并把业务路由挂到 `/api/v1`。
+
+## 请求与错误
+
+请求上下文在 `app/core/context.py`。中间件写入当前请求，响应头带回 `X-Request-ID`，并在 `finally` 里结束和 `reset`。
+
+成功响应用 `app/schemas/response.py` 的 `ok`，字段是 `success`、`code`、`msg`、`data`。`AppError`、`HTTPException`、校验错误和未捕获异常都由 `app/core/exceptions.py` 收成失败信封。未捕获异常记日志，响应 `msg` 固定为 `internal server error`。

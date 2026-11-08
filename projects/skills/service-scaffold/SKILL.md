@@ -1,7 +1,7 @@
 ---
 name: service-scaffold
 description: >-
-  搭建可扩展的 HTTP 服务脚手架，第一期落地 FastAPI。生成 app/api、app/core、app/schemas、app/services 分层项目，MySQL、Redis、Kafka、RabbitMQ 放在 app/core，用 MYSQL_ENABLED、REDIS_ENABLED、KAFKA_ENABLED、RABBITMQ_ENABLED 开关插拔，并带 Docker Compose profile。
+  搭建可扩展的 HTTP 服务脚手架，第一期落地 FastAPI。生成 app/api、app/core、app/schemas、app/services 分层项目，MySQL、Redis、Kafka、RabbitMQ 按名字懒连接，用 MYSQL_ENABLED、REDIS_ENABLED、KAFKA_ENABLED、RABBITMQ_ENABLED 开关插拔，并带请求上下文、统一响应信封、Docker Compose profile 和 make check。
   Use when the user asks to scaffold a service, create a FastAPI or Python HTTP service, or connect such a service to MySQL, Redis, Kafka, or RabbitMQ.
 ---
 
@@ -24,7 +24,7 @@ flowchart TD
     inputs --> empty{目标目录为空?}
     empty -->|否| stopNode2[停止，不覆盖]
     empty -->|是| render["运行 render_python.py"]
-    render --> verify["uv sync, ruff check, pytest"]
+    render --> verify["uv sync, make check"]
     verify --> doneNode[回报路径、开关与启动命令]
 ```
 
@@ -68,11 +68,10 @@ python3 scripts/render_python.py \
 
 ```bash
 uv sync
-uv run ruff check .
-uv run pytest
+make check
 ```
 
-本机有 `docker` 时再执行 `docker compose config`。
+`make check` 跑 Ruff、mypy、import-linter 和 pytest。本机有 `docker` 时再执行 `docker compose config`。
 
 任一命令失败就停下并报告输出。没有 `uv` 时停止，并说明安装 uv，不要改成 pip 或 conda 布局。
 
@@ -83,5 +82,6 @@ uv run pytest
 - 生成目录
 - `.env` 里哪些 `*_ENABLED` 是 `true`
 - 本地启动：`uv run fastapi dev app/main.py`
+- 完成检查：`make check`
 - 连同某个后端启动：`docker compose --profile mysql up --build`（多个后端就重复 `--profile`）
-- 之后改开关只改 `.env`，不需要重新生成
+- 之后改开关只改 `.env`。同一种再加一条连接用双下划线，例如 `MYSQL__ANALYTICS__ENABLED`。不需要重新生成

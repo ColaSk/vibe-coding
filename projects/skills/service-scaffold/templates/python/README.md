@@ -5,7 +5,7 @@ FastAPI 服务。导入包是 `app`。
 | 目录 | 内容 |
 |------|------|
 | `app/api` | 路由和 `get_db`、`get_redis`、`get_kafka`、`get_rabbitmq` |
-| `app/core` | `Settings`、lifespan，以及 MySQL、Redis、Kafka、RabbitMQ |
+| `app/core` | `Settings`，以及 MySQL、Redis、Kafka、RabbitMQ |
 | `app/schemas` | Pydantic 模型 |
 | `app/services` | 业务函数 |
 
@@ -14,13 +14,12 @@ FastAPI 服务。导入包是 `app`。
 ```bash
 uv sync
 uv run fastapi dev app/main.py
-uv run ruff check .
-uv run pytest
+make check
 ```
 
 ## 开关
 
-`.env` 里的 `MYSQL_ENABLED`、`REDIS_ENABLED`、`KAFKA_ENABLED`、`RABBITMQ_ENABLED` 默认是 `false`。改成 `true` 后重启进程，lifespan 才会连接对应后端。开关关掉时，对应的 `get_*` 依赖返回 503。
+`.env` 里的 `MYSQL_ENABLED`、`REDIS_ENABLED`、`KAFKA_ENABLED`、`RABBITMQ_ENABLED` 默认是 `false`，对应连接名是 `db`、`redis`、`kafka`、`rabbitmq`。改成 `true` 后，第一次取这条连接时才会建立客户端，并留在该类的实例上。同一种要再加一条时，用双下划线写下名字，例如 `MYSQL__ANALYTICS__ENABLED`。开关关掉时，按这个名字取连接会返回 503。
 
 ## Docker
 

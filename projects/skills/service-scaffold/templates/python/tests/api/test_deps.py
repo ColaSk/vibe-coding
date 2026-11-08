@@ -25,6 +25,18 @@ def test_dependencies_return_503_when_disabled() -> None:
         return {"connection": connection is not None}
 
     with TestClient(application) as client:
-        for path in ("/deps/db", "/deps/redis", "/deps/kafka", "/deps/rabbitmq"):
+        expected = {
+            "/deps/db": "db disabled",
+            "/deps/redis": "redis disabled",
+            "/deps/kafka": "kafka disabled",
+            "/deps/rabbitmq": "rabbitmq disabled",
+        }
+        for path, msg in expected.items():
             response = client.get(path)
             assert response.status_code == 503, path
+            assert response.json() == {
+                "success": False,
+                "code": 503,
+                "msg": msg,
+                "data": None,
+            }, path
