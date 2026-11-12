@@ -1,0 +1,39 @@
+.primary {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  border: 0;
+  border-radius: 5px;
+  &:disabled { opacity: .5; cursor: not-allowed; }
+}
+
+.secondary {
+  min-height: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-sideBar-border));
+  border-radius: 6px;
+  white-space: nowrap;
+  &:hover { background: var(--vscode-list-hoverBackground); }
+  &:disabled { opacity: .5; cursor: not-allowed; }
+}
+
+.small {
+  min-height: 24px;
+  height: 24px;
+  padding-inline: 7px;
+  border-radius: 4px;
+}
+
+.danger:hover {
+  color: var(--vscode-errorForeground, #f48771);
+}

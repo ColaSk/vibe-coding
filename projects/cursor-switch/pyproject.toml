@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cursor-switch"
+version = "0.1.0"
+description = "Local gateway that lets Cursor use self-configured third-party models"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "httpx>=0.28",
+  "sqlalchemy[asyncio]>=2.0",
+  "aiosqlite>=0.20",
+  "cryptography>=44.0",
+  "protobuf>=5.29",
+  "pydantic>=2.10",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.25",
+  "ruff>=0.9",
+  "mypy>=1.14",
+]
+
+[project.scripts]
+cursor-switch-server = "cursor_switch.control.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server/cursor_switch"]
+
+[tool.hatch.build.targets.wheel.sources]
+"server/cursor_switch" = "cursor_switch"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["cursor_switch"]
+mypy_path = "server"

@@ -1,0 +1,28 @@
+@use "../../styles/typography" as type;
+
+.root {
+  min-width: 0;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+
+  .header {
+    position: relative;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px;
+    border-bottom: 1px solid var(--vscode-sideBar-border);
+    -webkit-app-region: no-drag;
+  }
+
+  .title {
+    margin: 0;
+    font-size: type.$font-size-base;
+    font-weight: 630;
+  }
+
+  .body {
+    padding: 12px 14px 14px;
+  }
+}

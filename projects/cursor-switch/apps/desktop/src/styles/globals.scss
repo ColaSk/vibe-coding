@@ -1,0 +1,63 @@
+@use "./typography" as type;
+@use "./themes";
+
+:root {
+  --window-header-height: 30px;
+  --oa-ui-font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --oa-code-font: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --oa-metrics-font: var(--oa-ui-font);
+  --oa-number-font: var(--oa-ui-font);
+  font-family: var(--oa-ui-font);
+  font-size: type.$font-size-base;
+  color: var(--vscode-foreground);
+  background: transparent;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  color: var(--vscode-editor-selectionForeground);
+  background: var(--vscode-editor-selectionBackground);
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+[data-tauri-drag-region],
+[data-electron-drag-region] {
+  -webkit-app-region: drag;
+}
+
+/* Interactive controls must opt out of window-drag or clicks are swallowed. */
+a,
+button,
+input,
+select,
+textarea,
+label,
+[data-no-drag],
+[role="button"] {
+  -webkit-app-region: no-drag;
+}
