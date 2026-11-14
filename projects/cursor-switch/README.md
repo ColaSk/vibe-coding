@@ -12,7 +12,7 @@
 ## 结构
 
 ```text
-apps/desktop/     Electron 桌面客户端（样式对齐 cursor-byok）
+apps/desktop/     Electron 桌面客户端
 server/           Python 后端（FastAPI 控制面 + 领域核心 + 适配器）
 tools/            协议提取与抓包调试（开发用）
 protocols/        Cursor 协议产物
@@ -73,7 +73,31 @@ npm start
 npm run web
 ```
 
-界面视觉与 `cursor-byok` 对齐：暗色 VS Code token、左侧导航卡片、标题栏拖拽区、卡片/按钮控件。不含广告、插件页与外部教程入口。
+## 打包（macOS / Windows）
+
+打包产物 = Electron 壳 + PyInstaller 冻结的控制面 sidecar。
+
+```bash
+# 1) 冻结后端（在仓库根目录，需已 conda activate cursor-switch）
+bash packaging/build-server.sh
+# Windows: powershell -ExecutionPolicy Bypass -File packaging/build-server.ps1
+
+# 2) 打桌面安装包（在 apps/desktop）
+cd apps/desktop
+npm install
+npm run dist:mac   # → release/*.dmg / *.zip
+npm run dist:win   # → release/*-setup.exe（需在 Windows 上执行）
+```
+
+说明：
+
+- 开发模式仍用本机 Python（`python -m cursor_switch.control.main`）
+- 安装包内 sidecar 路径：`resources/cursor-switch-server/cursor-switch-server[.exe]`
+- 后端打包在中性目录完成（mac/linux：`/tmp/cursor-switch-build`；Windows：`%SystemDrive%\cursor-switch-build`），并用 micromamba 拉起隔离 Python 3.12，避免二进制嵌入本机用户路径；构建结束会扫描并拒绝含 `/Users/` 或 `/home/` 的产物
+- CI：推送 `v*` tag 触发 `.github/workflows/release.yml`（macos + windows 矩阵）
+- 当前 CI 产物为未公证/未签名构建；分发前可自行补签名与公证
+
+界面：暗色 VS Code token、左侧导航卡片、标题栏拖拽区、卡片/按钮控件。
 
 ## 接入 Cursor
 

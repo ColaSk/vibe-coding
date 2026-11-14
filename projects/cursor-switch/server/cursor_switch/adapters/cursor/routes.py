@@ -57,14 +57,24 @@ async def bootstrap_statsig(request: Request) -> Response:
 
 @router.post("/aiserver.v1.AiService/AvailableModels")
 async def available_models(request: Request) -> Response:
-    body = await _services(request).model_catalog.available_models_proto()
+    payload = await request.body()
+    body = await _services(request).model_catalog.available_models_proto(
+        path=request.url.path,
+        headers=dict(request.headers),
+        body=payload,
+    )
     return _proto(body)
 
 
 @router.post("/agent.v1.AgentService/GetUsableModels")
 @router.post("/aiserver.v1.AiService/GetUsableModels")
 async def usable_models(request: Request) -> Response:
-    body = await _services(request).model_catalog.usable_models_proto()
+    payload = await request.body()
+    body = await _services(request).model_catalog.usable_models_proto(
+        path=request.url.path,
+        headers=dict(request.headers),
+        body=payload,
+    )
     return _proto(body)
 
 

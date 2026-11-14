@@ -32,6 +32,25 @@ def settings_path() -> Path:
     raise RuntimeError(f"Cursor settings unsupported on {system}")
 
 
+def resolve_settings_path(configured: str | None = None) -> Path:
+    """Resolve Cursor settings.json from an optional configured path.
+
+    Empty uses the platform default. A directory may point at the Cursor user
+    data root, the User folder, or the file itself.
+    """
+    raw = (configured or "").strip()
+    if not raw:
+        return settings_path()
+    path = Path(raw).expanduser()
+    if path.is_dir():
+        if (path / "settings.json").is_file() or path.name == "User":
+            return path / "settings.json"
+        if (path / "User" / "settings.json").exists() or (path / "User").is_dir():
+            return path / "User" / "settings.json"
+        return path / "User" / "settings.json"
+    return path
+
+
 def _strip_jsonc(text: str) -> str:
     without_block = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     without_line = re.sub(r"(?m)^\s*//.*?$", "", without_block)

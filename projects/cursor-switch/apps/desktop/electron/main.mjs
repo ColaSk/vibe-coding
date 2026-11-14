@@ -9,6 +9,7 @@ const isDev = !app.isPackaged;
 const CONTROL_URL = process.env.CURSOR_SWITCH_CONTROL_URL ?? "http://127.0.0.1:8787";
 const CONTROL_PORT = Number(new URL(CONTROL_URL).port || 8787);
 const isMac = process.platform === "darwin";
+const isWin = process.platform === "win32";
 
 let mainWindow = null;
 let tray = null;
@@ -26,12 +27,41 @@ function resolvePython() {
     process.env.CURSOR_SWITCH_PYTHON,
     conda,
     path.join(process.env.HOME ?? "", "miniconda3/envs/cursor-switch/bin/python"),
-    "python3",
+    isWin ? "python" : "python3",
   ].filter(Boolean);
   for (const candidate of candidates) {
-    if (candidate === "python3" || fs.existsSync(candidate)) return candidate;
+    if (candidate === "python" || candidate === "python3" || fs.existsSync(candidate)) {
+      return candidate;
+    }
   }
-  return "python3";
+  return isWin ? "python" : "python3";
+}
+
+function packagedServerBinary() {
+  const name = isWin ? "cursor-switch-server.exe" : "cursor-switch-server";
+  return path.join(process.resourcesPath, "cursor-switch-server", name);
+}
+
+function backendLaunch() {
+  if (app.isPackaged) {
+    const command = packagedServerBinary();
+    return {
+      command,
+      args: ["--host", "127.0.0.1", "--port", String(CONTROL_PORT)],
+      cwd: path.dirname(command),
+      env: { ...process.env },
+    };
+  }
+  const cwd = projectRoot();
+  return {
+    command: resolvePython(),
+    args: ["-m", "cursor_switch.control.main", "--host", "127.0.0.1", "--port", String(CONTROL_PORT)],
+    cwd,
+    env: {
+      ...process.env,
+      PYTHONPATH: path.join(cwd, "server"),
+    },
+  };
 }
 
 async function probeBackend(timeoutMs = 1500) {
@@ -49,24 +79,20 @@ async function probeBackend(timeoutMs = 1500) {
 
 async function ensureBackend() {
   if (await probeBackend()) return true;
-  const python = resolvePython();
-  const cwd = projectRoot();
-  backend = spawn(
-    python,
-    ["-m", "cursor_switch.control.main", "--host", "127.0.0.1", "--port", String(CONTROL_PORT)],
-    {
-      cwd,
-      env: {
-        ...process.env,
-        PYTHONPATH: path.join(cwd, "server"),
-      },
-      stdio: "ignore",
-    },
-  );
+  const launch = backendLaunch();
+  if (app.isPackaged && !fs.existsSync(launch.command)) {
+    return false;
+  }
+  backend = spawn(launch.command, launch.args, {
+    cwd: launch.cwd,
+    env: launch.env,
+    stdio: "ignore",
+    windowsHide: true,
+  });
   backend.on("exit", () => {
     backend = null;
   });
-  for (let i = 0; i < 40; i += 1) {
+  for (let i = 0; i < 50; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 200));
     if (await probeBackend()) return true;
   }
@@ -118,7 +144,10 @@ async function createWindow() {
 }
 
 function createTray() {
-  const image = nativeImage.createEmpty();
+  const image = nativeImage.createFromDataURL(
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAKElEQVQ4T2NkoBAwUqifgYGB4T8DAwMDAwMDAwMDAwMDAwMDAwMDA4gAAM0HBgF0m0nVAAAAAElFTkSuQmCC",
+  );
+  image.setTemplateImage(true);
   tray = new Tray(image);
   tray.setToolTip("cursor-switch");
   tray.setContextMenu(
@@ -147,13 +176,13 @@ ipcMain.on("window:close", () => mainWindow?.close());
 app.whenReady().then(async () => {
   const ok = await ensureBackend();
   if (!ok) {
-    await dialog.showErrorBox(
-      "cursor-switch",
-      `无法拉起或连接控制面 ${CONTROL_URL}。请确认 conda 环境 cursor-switch 已安装后端。`,
-    );
+    const hint = app.isPackaged
+      ? `无法拉起或连接控制面 ${CONTROL_URL}。请重新安装应用，或检查端口 ${CONTROL_PORT} 是否被占用。`
+      : `无法拉起或连接控制面 ${CONTROL_URL}。请确认 conda 环境 cursor-switch 已安装后端。`;
+    await dialog.showErrorBox("cursor-switch", hint);
   }
-  createTray();
   await createWindow();
+  createTray();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
     else showWindow();

@@ -9,5 +9,8 @@ build/
 *.egg-info/
 apps/desktop/node_modules/
 apps/desktop/dist/
+apps/desktop/release/
+packaging/build/
+packaging/dist/
 .DS_Store
 *.db

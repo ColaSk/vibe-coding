@@ -1,9 +1,17 @@
-"""Project configured models into Cursor AvailableModels / GetUsableModels protobuf."""
+"""Project configured models into Cursor AvailableModels / GetUsableModels protobuf.
+
+Official Cursor catalog is fetched upstream and local models are appended
+(merge/add), matching cursor-byok behavior.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import logging
+import struct
+from collections.abc import Awaitable, Callable, Mapping
 from urllib.parse import urlparse
+
+import httpx
 
 from cursor_switch.adapters.cursor.proto_min import (
     encode_bool,
@@ -11,9 +19,28 @@ from cursor_switch.adapters.cursor.proto_min import (
     encode_message_field,
     encode_string,
 )
+from cursor_switch.adapters.local_access.routing import UPSTREAM_URL_HEADER, is_cursor_host
 from cursor_switch.adapters.persistence.repositories import ModelRecord
 
+logger = logging.getLogger("cursor_switch.model_catalog")
+
 CLI_LOCAL_API_KEY = "cursor-switch-local"
+CURSOR_UPSTREAM = "https://api2.cursor.sh"
+
+_HOP_BY_HOP = frozenset(
+    {
+        "proxy-connection",
+        "connection",
+        "keep-alive",
+        "transfer-encoding",
+        "te",
+        "trailer",
+        "upgrade",
+        "host",
+        "content-length",
+        UPSTREAM_URL_HEADER,
+    }
+)
 
 _CONTEXTS: tuple[tuple[str, str], ...] = (
     ("200k", "200K"),
@@ -301,18 +328,130 @@ def encode_default_model_nudge(rows: list[ModelRecord]) -> bytes:
     return bytes(parts)
 
 
+def merge_catalog_payload(upstream_body: bytes, local_addition: bytes) -> bytes:
+    """Append local protobuf fields onto an upstream catalog body.
+
+    Preserves Connect unary framing when present. Falls back to raw concat when
+    the body is unframed. Raises ValueError for compressed frames.
+    """
+    if not local_addition:
+        return upstream_body
+    if len(upstream_body) >= 5:
+        flags = upstream_body[0]
+        length = struct.unpack(">I", upstream_body[1:5])[0]
+        if length == len(upstream_body) - 5:
+            if flags != 0:
+                raise ValueError(f"cannot merge compressed catalog frame: flags={flags}")
+            payload = upstream_body[5:]
+            merged = payload + local_addition
+            return bytes([0]) + struct.pack(">I", len(merged)) + merged
+    return upstream_body + local_addition
+
+
+def _header(headers: Mapping[str, str], name: str) -> str:
+    wanted = name.lower()
+    for key, value in headers.items():
+        if key.lower() == wanted:
+            return value
+    return ""
+
+
+def resolve_upstream_url(path: str, headers: Mapping[str, str]) -> str:
+    stamped = _header(headers, UPSTREAM_URL_HEADER).strip()
+    if stamped:
+        parsed = urlparse(stamped)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme == "https" and is_cursor_host(host):
+            return stamped
+    route = path if path.startswith("/") else f"/{path}"
+    return f"{CURSOR_UPSTREAM}{route}"
+
+
+async def fetch_upstream_catalog(
+    *,
+    path: str,
+    headers: Mapping[str, str],
+    body: bytes,
+    client: httpx.AsyncClient | None = None,
+) -> bytes | None:
+    """Fetch official Cursor catalog; return None when upstream is unavailable."""
+    url = resolve_upstream_url(path, headers)
+    outbound = {
+        key: value
+        for key, value in headers.items()
+        if key.lower() not in _HOP_BY_HOP
+    }
+    outbound["connect-accept-encoding"] = "identity"
+    outbound["accept-encoding"] = "identity"
+    owns_client = client is None
+    http = client or httpx.AsyncClient(timeout=20.0, follow_redirects=False)
+    try:
+        response = await http.post(url, headers=outbound, content=body)
+        if response.status_code >= 400:
+            logger.warning(
+                "Cursor catalog upstream rejected %s with %s",
+                path,
+                response.status_code,
+            )
+            return None
+        return response.content
+    except httpx.HTTPError as exc:
+        logger.warning("Cursor catalog upstream unavailable for %s: %s", path, exc)
+        return None
+    finally:
+        if owns_client:
+            await http.aclose()
+
+
 class ModelCatalog:
-    def __init__(self, list_models: Callable[[], Awaitable[list[ModelRecord]]]) -> None:
+    def __init__(
+        self,
+        list_models: Callable[[], Awaitable[list[ModelRecord]]],
+        *,
+        upstream_fetch: Callable[..., Awaitable[bytes | None]] | None = None,
+    ) -> None:
         self._list_models = list_models
+        self._upstream_fetch = upstream_fetch or fetch_upstream_catalog
 
     async def _enabled(self) -> list[ModelRecord]:
         return [row for row in await self._list_models() if row.enabled]
 
-    async def available_models_proto(self) -> bytes:
-        return encode_available_models(await self._enabled())
+    async def _merged(
+        self,
+        local: bytes,
+        *,
+        path: str,
+        headers: Mapping[str, str],
+        body: bytes,
+    ) -> bytes:
+        upstream = await self._upstream_fetch(path=path, headers=headers, body=body)
+        if upstream is None:
+            return local
+        try:
+            return merge_catalog_payload(upstream, local)
+        except ValueError as exc:
+            logger.warning("cannot merge Cursor catalog for %s: %s", path, exc)
+            return local
 
-    async def usable_models_proto(self) -> bytes:
-        return encode_usable_models(await self._enabled())
+    async def available_models_proto(
+        self,
+        *,
+        path: str = "/aiserver.v1.AiService/AvailableModels",
+        headers: Mapping[str, str] | None = None,
+        body: bytes = b"",
+    ) -> bytes:
+        local = encode_available_models(await self._enabled())
+        return await self._merged(local, path=path, headers=headers or {}, body=body)
+
+    async def usable_models_proto(
+        self,
+        *,
+        path: str = "/aiserver.v1.AiService/GetUsableModels",
+        headers: Mapping[str, str] | None = None,
+        body: bytes = b"",
+    ) -> bytes:
+        local = encode_usable_models(await self._enabled())
+        return await self._merged(local, path=path, headers=headers or {}, body=body)
 
     async def default_model_proto(self) -> bytes:
         return encode_default_model(await self._enabled())

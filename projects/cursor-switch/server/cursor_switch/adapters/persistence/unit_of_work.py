@@ -8,7 +8,11 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from cursor_switch.adapters.persistence.repositories import ModelRepository, SettingsRepository
+from cursor_switch.adapters.persistence.repositories import (
+    CallRepository,
+    ModelRepository,
+    SettingsRepository,
+)
 
 
 @dataclass
@@ -22,6 +26,10 @@ class UnitOfWork:
     @property
     def settings(self) -> SettingsRepository:
         return SettingsRepository(self.session)
+
+    @property
+    def calls(self) -> CallRepository:
+        return CallRepository(self.session)
 
 
 class UnitOfWorkFactory:

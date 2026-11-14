@@ -18,9 +18,7 @@ export function Button({
     <button
       {...props}
       type={type}
-      className={[controls[variant], size === "small" && controls.small, className]
-        .filter(Boolean)
-        .join(" ")}
+      className={[controls[variant], size === "small" && controls.small, className].filter(Boolean).join(" ")}
     />
   );
 }

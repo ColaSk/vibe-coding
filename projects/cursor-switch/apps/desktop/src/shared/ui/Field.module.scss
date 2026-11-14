@@ -6,9 +6,7 @@
   color: var(--vscode-descriptionForeground);
   font-size: type.$font-size-xs;
 
-  input,
-  select,
-  textarea {
+  input {
     width: 100%;
     height: 32px;
     padding: 0 9px;
@@ -20,25 +18,6 @@
 
     &:focus {
       border-color: var(--vscode-focusBorder);
-    }
-  }
-
-  textarea {
-    height: auto;
-    min-height: 72px;
-    padding: 8px 9px;
-    resize: vertical;
-  }
-
-  &.check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--vscode-foreground);
-
-    input {
-      width: auto;
-      height: auto;
     }
   }
 }

@@ -227,7 +227,7 @@ def encode_prompt_model_metadata(
     }
     if prompt_version not in known_versions:
         prompt_version = "latest"
-    # Local BYOK: Claude 4.x prompt path. Never set use_dsv3_harness.
+    # Local model path: Claude 4.x prompt. Never set use_dsv3_harness.
     parts = bytearray()
     parts.extend(encode_string(1, vendor))
     parts.extend(encode_string(2, prompt_version))

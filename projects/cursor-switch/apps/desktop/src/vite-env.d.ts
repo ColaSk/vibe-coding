@@ -1,4 +1,6 @@
 /// <reference types="vite/client" />
+/// <reference path="./i18n/global.d.ts" />
+/// <reference path="./monaco.d.ts" />
 
 interface ElectronAPI {
   windowMinimize: () => void;

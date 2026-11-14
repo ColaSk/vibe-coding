@@ -81,6 +81,68 @@ class SettingsService:
             raw = await uow.settings.get_json("harness", {"enabled": False})
             return HarnessSettings(**raw)  # type: ignore[arg-type]
 
+    async def get_detailed(self) -> bool:
+        async with self._uow_factory.begin() as uow:
+            raw = await uow.settings.get_json("observation", {"detailed": False})
+            return bool(raw.get("detailed"))
+
+    async def set_detailed(self, detailed: bool) -> bool:
+        async with self._uow_factory.begin() as uow:
+            await uow.settings.put_json("observation", {"detailed": detailed})
+            return detailed
+
+    async def get_tab(self) -> dict[str, str]:
+        async with self._uow_factory.begin() as uow:
+            raw = await uow.settings.get_json("tab", {"mode": "direct", "address": ""})
+            mode = str(raw.get("mode") or "direct")
+            if mode == "public":
+                mode = "direct"
+            return {"mode": mode, "address": str(raw.get("address") or "")}
+
+    async def set_tab(self, mode: str, address: str) -> dict[str, str]:
+        value = {"mode": mode, "address": address}
+        async with self._uow_factory.begin() as uow:
+            await uow.settings.put_json("tab", value)
+            return value
+
+    async def get_cursor_path(self) -> str:
+        async with self._uow_factory.begin() as uow:
+            raw = await uow.settings.get_json("cursor_path", {"path": ""})
+            return str(raw.get("path") or "")
+
+    async def set_cursor_path(self, path: str) -> str:
+        value = path.strip()
+        async with self._uow_factory.begin() as uow:
+            await uow.settings.put_json("cursor_path", {"path": value})
+            return value
+
+    async def get_commit_model(self) -> str:
+        async with self._uow_factory.begin() as uow:
+            raw = await uow.settings.get_json("commit", {"model_id": ""})
+            return str(raw.get("model_id") or "")
+
+    async def set_commit_model(self, model_id: str) -> str:
+        async with self._uow_factory.begin() as uow:
+            await uow.settings.put_json("commit", {"model_id": model_id})
+            return model_id
+
+    async def get_pricing(self) -> dict[str, object]:
+        async with self._uow_factory.begin() as uow:
+            return await uow.settings.get_json(
+                "pricing",
+                {
+                    "input_per_million": 5.0,
+                    "output_per_million": 25.0,
+                    "cache_read_per_million": 0.5,
+                    "cache_write_per_million": 6.25,
+                },
+            )
+
+    async def set_pricing(self, pricing: dict[str, object]) -> dict[str, object]:
+        async with self._uow_factory.begin() as uow:
+            await uow.settings.put_json("pricing", pricing)
+            return pricing
+
     async def set_harness_enabled(self, enabled: bool) -> HarnessSettings:
         settings = HarnessSettings(enabled=enabled)
         async with self._uow_factory.begin() as uow:

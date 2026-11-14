@@ -6,8 +6,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
-  -webkit-app-region: no-drag;
+  overflow: hidden;
 }
 
 .title {
@@ -16,104 +15,47 @@
   top: var(--app-content-top);
   left: max(var(--app-page-padding), calc((100% - var(--app-page-max-width)) / 2));
   margin: 0;
+  padding-left: 0;
   font-size: type.$font-size-xxl;
   font-weight: bolder;
   transform: translateY(-150%);
   -webkit-user-select: none;
   user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  -webkit-touch-callout: none;
   -webkit-user-drag: none;
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
   pointer-events: none;
 }
 
-.body {
+.scrollBody {
+  position: absolute;
+  z-index: 1;
+  top: var(--app-content-top);
+  right: 0;
+  bottom: calc(var(--app-edge) + var(--window-corner-safe-bottom, 0px));
+  left: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fixedContent {
   width: calc(100% - var(--app-page-padding) * 2);
   max-width: var(--app-page-max-width);
-  margin: 0 auto 24px;
   padding-top: var(--app-content-top);
-  display: grid;
-  gap: 14px;
-  padding-bottom: 24px;
-  -webkit-app-region: no-drag;
-  position: relative;
-  z-index: 22;
+  margin-right: auto;
+  margin-left: auto;
 }
 
-.muted {
-  color: var(--vscode-descriptionForeground);
+.fixedContent,
+.fixedSection {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
-.err {
-  color: var(--vscode-errorForeground);
-}
-
-.ok {
-  color: var(--vscode-gitDecoration-addedResourceForeground);
-}
-
-.stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.stat {
-  border: 1px solid var(--vscode-sideBar-border);
-  border-radius: 6px;
-  padding: 12px;
-  background: var(--vscode-input-background);
-
-  strong {
-    display: block;
-    font-size: type.$font-size-xl;
-    color: var(--vscode-foreground);
-  }
-
-  span {
-    color: var(--vscode-descriptionForeground);
-    font-size: type.$font-size-2xs;
-  }
-}
-
-.list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 8px;
-}
-
-.listItem {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: start;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--vscode-sideBar-border);
-
-  &:last-child {
-    border-bottom: 0;
-  }
-}
-
-.actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.form {
-  display: grid;
-  gap: 10px;
-}
-
-.stack {
-  display: grid;
-  gap: 10px;
-}
-
-@media (max-width: 900px) {
-  .stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.fixedSection {
+  width: 100%;
 }

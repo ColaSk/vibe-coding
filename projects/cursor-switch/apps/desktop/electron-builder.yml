@@ -1,0 +1,35 @@
+appId: com.cursor-switch.app
+productName: cursor-switch
+copyright: Copyright © cursor-switch
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - electron/**
+  - package.json
+extraResources:
+  - from: ../../packaging/dist/cursor-switch-server
+    to: cursor-switch-server
+asar: true
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+  identity: null
+  gatekeeperAssess: false
+win:
+  target:
+    - nsis
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+linux:
+  target:
+    - AppImage
+  category: Development
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}

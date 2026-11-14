@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from cursor_switch.adapters.persistence.repositories import ModelRecord
 from cursor_switch.control.schemas import ConnectivityResultOut, ModelInput, ModelOut, ReorderInput
@@ -25,6 +26,7 @@ def _to_record(payload: ModelInput, model_id: str = "") -> ModelRecord:
         sort_order=payload.sort_order,
         extra=payload.extra,
         headers=payload.headers,
+        group_name=payload.group_name,
     )
 
 
@@ -42,6 +44,43 @@ async def list_models(request: Request) -> list[ModelOut]:
 async def create_model(payload: ModelInput, request: Request) -> ModelOut:
     record = await request.app.state.services.models.create_model(_to_record(payload))
     return _to_out(record)
+
+
+class DiscoverIn(BaseModel):
+    provider_type: str
+    base_url: str
+    api_key: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
+class GroupUpdateIn(BaseModel):
+    group_name: str
+    base_url: str | None = None
+    api_key: str | None = None
+
+
+@router.post("/discover")
+async def discover_models(payload: DiscoverIn, request: Request) -> dict[str, list[str]]:
+    try:
+        ids = await request.app.state.services.models.discover_ids(
+            provider_type=payload.provider_type,
+            base_url=payload.base_url,
+            api_key=payload.api_key,
+            headers=payload.headers,
+        )
+    except Exception as error:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"model_ids": ids}
+
+
+@router.put("/group", response_model=list[ModelOut])
+async def update_group(payload: GroupUpdateIn, request: Request) -> list[ModelOut]:
+    records = await request.app.state.services.models.update_group(
+        payload.group_name,
+        base_url=payload.base_url,
+        api_key=payload.api_key,
+    )
+    return [_to_out(record) for record in records]
 
 
 @router.put("/order", response_model=list[ModelOut])

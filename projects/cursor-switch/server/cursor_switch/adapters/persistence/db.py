@@ -30,9 +30,21 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
+def _ensure_columns(connection) -> None:
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(connection)
+    if "models" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("models")}
+    if "group_name" not in columns:
+        connection.execute(text("ALTER TABLE models ADD COLUMN group_name VARCHAR(200) DEFAULT ''"))
+
+
 async def init_schema(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(_ensure_columns)
 
 
 async def session_scope(

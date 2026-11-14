@@ -14,7 +14,12 @@ from threading import Lock
 import httpx
 
 from cursor_switch.adapters.local_access.ca import CaManager
-from cursor_switch.adapters.local_access.routing import is_cursor_host, should_route_locally
+from cursor_switch.adapters.local_access.routing import (
+    UPSTREAM_URL_HEADER,
+    is_cursor_host,
+    should_route_locally,
+    upstream_url,
+)
 
 
 logger = logging.getLogger("cursor_switch.proxy")
@@ -67,6 +72,8 @@ class CursorProxy:
         self._cert_cache: dict[str, tuple[str, str]] = {}
         self._traffic: deque[TrafficEvent] = deque(maxlen=traffic_limit)
         self._traffic_lock = Lock()
+        self.tab_mode = "direct"
+        self.tab_address = ""
 
     @property
     def status(self) -> ProxyStatus:
@@ -322,14 +329,22 @@ class CursorProxy:
                     )
                     raise
                 return
+            target = upstream_url(
+                path,
+                host,
+                local=local,
+                backend_host=self._backend_host,
+                backend_port=self._backend_port,
+                tab_mode=self.tab_mode,
+                tab_address=self.tab_address,
+            )
+            forward_headers = headers
             if local:
-                target = f"http://{self._backend_host}:{self._backend_port}{path}"
-            else:
-                # Keep the original Cursor host (api2/api3/metrics/…).
-                target = f"https://{host}{path}"
+                forward_headers = dict(headers)
+                forward_headers[UPSTREAM_URL_HEADER] = f"https://{host}{path}"
             try:
                 close_after, status = await self._forward_stream(
-                    writer, method, target, headers, body
+                    writer, method, target, forward_headers, body
                 )
                 self.record(
                     TrafficEvent(

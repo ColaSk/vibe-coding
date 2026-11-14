@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+# MITM stamps the original Cursor URL so local handlers can re-fetch upstream.
+UPSTREAM_URL_HEADER = "x-cursor-switch-upstream-url"
+
 LOCAL_PATHS = frozenset(
     {
         "/agent/v1/run",  # modern Cursor agent WebSocket (wss)
@@ -62,16 +65,36 @@ TAB_PATHS = frozenset(
     }
 )
 
-OFFICIAL_ORIGIN = "https://api2.cursor.sh"
-
-
 def is_cursor_host(host: str) -> bool:
     host = host.strip(".").lower()
     return host in {"api2.cursor.sh", "api3.cursor.sh"} or host.endswith(".cursor.sh")
 
 
 def should_route_locally(path: str) -> bool:
-    """Tab always goes official; Agent and account paths stay local."""
+    """Tab always goes upstream; Agent and account paths stay local."""
     if path in TAB_PATHS:
         return False
     return path in LOCAL_PATHS
+
+
+def upstream_url(
+    path: str,
+    host: str,
+    *,
+    local: bool,
+    backend_host: str,
+    backend_port: int,
+    tab_mode: str = "direct",
+    tab_address: str = "",
+) -> str:
+    """Pick the upstream for one MITM request.
+
+    Tab modes: direct keeps the original Cursor host; custom rewrites to the
+    configured address.
+    """
+    if local:
+        return f"http://{backend_host}:{backend_port}{path}"
+    route_path = path.split("?", 1)[0]
+    if route_path in TAB_PATHS and tab_mode == "custom" and tab_address.strip():
+        return f"{tab_address.rstrip('/')}{path}"
+    return f"https://{host}{path}"

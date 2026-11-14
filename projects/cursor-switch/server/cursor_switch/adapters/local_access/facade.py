@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cursor_switch.adapters.local_access.ca import CaManager, CaState
-from cursor_switch.adapters.local_access.cursor_settings import apply_proxy, clear_proxy
+from cursor_switch.adapters.local_access.cursor_settings import (
+    apply_proxy,
+    clear_proxy,
+    resolve_settings_path,
+)
 from cursor_switch.adapters.local_access.proxy import CursorProxy, ProxyStatus, ProxyTrafficMode
 
 
@@ -29,8 +33,18 @@ class LocalAccessFacade:
     ) -> None:
         self.ca = ca or CaManager()
         self.proxy = proxy or CursorProxy(self.ca)
-        self._cursor_settings_path = cursor_settings_path
+        self._cursor_settings_override = cursor_settings_path
+        self._cursor_settings_configured = ""
         self._enabled = False
+
+    def set_cursor_settings_configured(self, configured: str) -> Path:
+        self._cursor_settings_configured = configured.strip()
+        return self.cursor_settings_path()
+
+    def cursor_settings_path(self) -> Path:
+        if self._cursor_settings_override is not None:
+            return self._cursor_settings_override
+        return resolve_settings_path(self._cursor_settings_configured)
 
     def status(self) -> LocalAccessStatus:
         return LocalAccessStatus(
@@ -71,13 +85,13 @@ class LocalAccessFacade:
                 await self.proxy.stop()
                 raise ValueError("proxy started without a URL")
             try:
-                apply_proxy(url, self._cursor_settings_path)
+                apply_proxy(url, self.cursor_settings_path())
             except Exception:
                 await self.proxy.stop()
                 raise
             self._enabled = True
         else:
-            clear_proxy(self._cursor_settings_path)
+            clear_proxy(self.cursor_settings_path())
             await self.proxy.stop()
             self._enabled = False
         return self.status()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
 from cursor_switch.adapters.cursor.checkpoints import MemoryCheckpoints
@@ -49,14 +49,15 @@ class CursorGateway:
         model_lookup: Callable[[str], ProviderConfig | None] | None = None,
         known_model_ids: Callable[[], set[str]] | None = None,
         accept_all_models: bool = False,
+        on_call_finished: Callable[..., Awaitable[None]] | None = None,
     ) -> None:
         self.transport = transport or TransportRegistry()
         if model is not None:
             self._model: ModelPort = model
         elif model_lookup is not None:
-            self._model = ProviderRouter(model_lookup)
+            self._model = ProviderRouter(model_lookup, on_call_finished)
         else:
-            self._model = ProviderRouter(lambda _model_id: None)
+            self._model = ProviderRouter(lambda _model_id: None, on_call_finished)
         self._known_model_ids = known_model_ids or (lambda: set())
         self._accept_all_models = accept_all_models or model is not None
         self._conversations = ConversationRegistry(

@@ -26,6 +26,9 @@ dev = [
   "ruff>=0.9",
   "mypy>=1.14",
 ]
+packaging = [
+  "pyinstaller>=6.11",
+]
 
 [project.scripts]
 cursor-switch-server = "cursor_switch.control.main:main"

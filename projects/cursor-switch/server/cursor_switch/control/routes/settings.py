@@ -11,8 +11,14 @@ from cursor_switch.adapters.persistence.repositories import (
 )
 from cursor_switch.adapters.local_access.proxy import ProxyTrafficMode
 from cursor_switch.control.schemas import (
+    CommitSettingsIn,
+    CursorPathIn,
+    CursorPathOut,
     DesktopSettingsIn,
     HarnessEnabledIn,
+    ObservationIn,
+    PricingIn,
+    TabSettingsIn,
     HarnessModeIn,
     HarnessStatusOut,
     PortSettingsIn,
@@ -101,6 +107,92 @@ async def update_desktop(payload: DesktopSettingsIn, request: Request) -> Deskto
     return DesktopSettingsIn(
         silent_start=desktop.silent_start, show_dock_icon=desktop.show_dock_icon
     )
+
+
+@router.get("/settings/observation", response_model=ObservationIn)
+async def get_observation(request: Request) -> ObservationIn:
+    return ObservationIn(detailed=await request.app.state.services.settings.get_detailed())
+
+
+@router.put("/settings/observation", response_model=ObservationIn)
+async def update_observation(payload: ObservationIn, request: Request) -> ObservationIn:
+    detailed = await request.app.state.services.settings.set_detailed(payload.detailed)
+    return ObservationIn(detailed=detailed)
+
+
+@router.get("/settings/tab", response_model=TabSettingsIn)
+async def get_tab(request: Request) -> TabSettingsIn:
+    tab = await request.app.state.services.settings.get_tab()
+    return TabSettingsIn(mode=tab["mode"], address=tab["address"])
+
+
+@router.put("/settings/tab", response_model=TabSettingsIn)
+async def update_tab(payload: TabSettingsIn, request: Request) -> TabSettingsIn:
+    if payload.mode not in {"direct", "custom"}:
+        raise HTTPException(status_code=400, detail="mode must be direct or custom")
+    if payload.mode == "custom" and not payload.address.strip():
+        raise HTTPException(status_code=400, detail="TAB 服务地址不能为空")
+    saved = await request.app.state.services.settings.set_tab(payload.mode, payload.address.strip())
+    proxy = request.app.state.services.local_access.proxy
+    proxy.tab_mode = saved["mode"]
+    proxy.tab_address = saved["address"]
+    return TabSettingsIn(mode=saved["mode"], address=saved["address"])
+
+
+@router.get("/settings/cursor-path", response_model=CursorPathOut)
+async def get_cursor_path(request: Request) -> CursorPathOut:
+    from cursor_switch.adapters.local_access.cursor_settings import settings_path
+
+    configured = await request.app.state.services.settings.get_cursor_path()
+    request.app.state.services.local_access.set_cursor_settings_configured(configured)
+    return CursorPathOut(
+        path=configured,
+        default_path=str(settings_path()),
+        effective_path=str(request.app.state.services.local_access.cursor_settings_path()),
+    )
+
+
+@router.put("/settings/cursor-path", response_model=CursorPathOut)
+async def update_cursor_path(payload: CursorPathIn, request: Request) -> CursorPathOut:
+    from cursor_switch.adapters.local_access.cursor_settings import settings_path
+
+    if request.app.state.services.harness.status().enabled:
+        raise HTTPException(status_code=400, detail="请先关闭接管，再修改 Cursor 路径")
+    saved = await request.app.state.services.settings.set_cursor_path(payload.path)
+    effective = request.app.state.services.local_access.set_cursor_settings_configured(saved)
+    return CursorPathOut(
+        path=saved,
+        default_path=str(settings_path()),
+        effective_path=str(effective),
+    )
+
+
+@router.get("/settings/commit", response_model=CommitSettingsIn)
+async def get_commit(request: Request) -> CommitSettingsIn:
+    return CommitSettingsIn(model_id=await request.app.state.services.settings.get_commit_model())
+
+
+@router.put("/settings/commit", response_model=CommitSettingsIn)
+async def update_commit(payload: CommitSettingsIn, request: Request) -> CommitSettingsIn:
+    model_id = await request.app.state.services.settings.set_commit_model(payload.model_id)
+    return CommitSettingsIn(model_id=model_id)
+
+
+@router.get("/settings/pricing", response_model=PricingIn)
+async def get_pricing(request: Request) -> PricingIn:
+    raw = await request.app.state.services.settings.get_pricing()
+    return PricingIn(
+        input_per_million=float(raw.get("input_per_million") or 0),
+        output_per_million=float(raw.get("output_per_million") or 0),
+        cache_read_per_million=float(raw.get("cache_read_per_million") or 0),
+        cache_write_per_million=float(raw.get("cache_write_per_million") or 0),
+    )
+
+
+@router.put("/settings/pricing", response_model=PricingIn)
+async def update_pricing(payload: PricingIn, request: Request) -> PricingIn:
+    saved = await request.app.state.services.settings.set_pricing(payload.model_dump())
+    return PricingIn(**saved)
 
 
 @router.get("/harness/cursor/status", response_model=HarnessStatusOut)

@@ -61,3 +61,34 @@ label,
 [role="button"] {
   -webkit-app-region: no-drag;
 }
+
+.scroll-shadow-top[data-scrolled="true"] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 24px,
+    black 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 24px,
+    black 100%
+  );
+}
+
+.scroll-shadow-bottom {
+  --scroll-shadow-bottom-size: 24px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black calc(100% - var(--scroll-shadow-bottom-size)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black calc(100% - var(--scroll-shadow-bottom-size)),
+    transparent 100%
+  );
+}

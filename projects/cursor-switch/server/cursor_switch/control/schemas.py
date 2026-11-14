@@ -18,6 +18,7 @@ class ModelInput(BaseModel):
     sort_order: int = 0
     extra: dict[str, object] = Field(default_factory=dict)
     headers: dict[str, str] = Field(default_factory=dict)
+    group_name: str = ""
 
 
 class ModelOut(ModelInput):
@@ -44,6 +45,36 @@ class ProxySettingsIn(BaseModel):
 class DesktopSettingsIn(BaseModel):
     silent_start: bool = False
     show_dock_icon: bool = True
+
+
+class ObservationIn(BaseModel):
+    detailed: bool = False
+
+
+class TabSettingsIn(BaseModel):
+    mode: str = "direct"
+    address: str = ""
+
+
+class CursorPathIn(BaseModel):
+    path: str = ""
+
+
+class CursorPathOut(BaseModel):
+    path: str = ""
+    default_path: str
+    effective_path: str
+
+
+class CommitSettingsIn(BaseModel):
+    model_id: str = ""
+
+
+class PricingIn(BaseModel):
+    input_per_million: float = 0
+    output_per_million: float = 0
+    cache_read_per_million: float = 0
+    cache_write_per_million: float = 0
 
 
 class HarnessStatusOut(BaseModel):
