@@ -9,6 +9,7 @@ import httpx
 
 from cursor_switch.adapters.providers.base import (
     ProviderConfig,
+    default_httpx_timeout,
     end_event,
     error_event,
     iter_sse_json,
@@ -49,7 +50,7 @@ class OpenAiChatStrategy:
             **self._config.headers,
         }
         owns_client = self._client is None
-        client = self._client or httpx.AsyncClient(timeout=15.0)
+        client = self._client or httpx.AsyncClient(timeout=default_httpx_timeout())
         try:
             async with client.stream("POST", url, headers=headers, json=body) as response:
                 if response.status_code >= 400:

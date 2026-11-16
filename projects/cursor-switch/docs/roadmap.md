@@ -97,7 +97,12 @@
 ## 当前状态
 
 - 阶段 0–8 主干已落地。
-- 已知占位：Shell/MCP/生图；AgentClientMessage 完整 protobuf（现用 JSON envelope）；调用记录图表与批量改模型仍可继续打磨。
+- **Agent 面追齐 byok（1B）进展**：
+  - `protocols/cursor/agent_v1.proto` + 生成 `adapters/cursor/pb/`；下行 `AgentServerMessage`（不再发 JSON ModelEvent）
+  - 客户端工具 Wire：`ExecServerMessage` / `ExecClientMessage` + `ClientExecDispatcher`；mode `tools.json` / prompt 资产
+  - 上下文 hydrate、SQLite checkpoint、Resume/Plan/Summarize 动作语义、提交信息走模型
+  - 仍弱于 byok：部分 Background* 动作、完整 InteractionQuery 卡片、压缩 prompt 深度、抓包回归自动化
 - 协议工具：`tools/protocol_extractor`、`tools/protocol_capture`；说明见 [`protocol-tools.md`](./protocol-tools.md)。
 - 环境约定：conda `cursor-switch`（Python 3.12）、nvm Node `v26.13.0`。
 - 验证：`pytest -q`；`apps/desktop` 下 `npm run build`。
+- 重新生成 pb：`bash scripts/gen-proto.sh`（需 `grpcio-tools`）。

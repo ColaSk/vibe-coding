@@ -20,6 +20,7 @@ class MessageDelivery(str, Enum):
     INSERT = "insert"
     BREAK = "break"
     CANCEL = "cancel"
+    ERROR = "error"
 
 
 INSERT_ACTIONS = frozenset(
@@ -30,6 +31,7 @@ INSERT_ACTIONS = frozenset(
         ClientActionKind.ASYNC_ASK,
         ClientActionKind.SUBSCRIPTION,
         ClientActionKind.GOAL_CONTINUATION,
+        ClientActionKind.RESUME,
     }
 )
 
@@ -38,6 +40,9 @@ BREAK_ACTIONS = frozenset(
         ClientActionKind.USER_MESSAGE,
         ClientActionKind.INJECT_CONTEXT,
         ClientActionKind.RUN_INFERENCE_INVOKE,
+        ClientActionKind.START_PLAN,
+        ClientActionKind.EXECUTE_PLAN,
+        ClientActionKind.SUMMARIZE,
     }
 )
 
@@ -48,13 +53,15 @@ CANCEL_ACTIONS = frozenset(
     }
 )
 
+# Still unsupported mid-run semantics (align with byok): shell_command → explicit error text
+ERROR_ACTIONS = frozenset(
+    {
+        ClientActionKind.SHELL_COMMAND,
+    }
+)
+
 IGNORE_ACTIONS = frozenset(
     {
-        ClientActionKind.RESUME,
-        ClientActionKind.SUMMARIZE,
-        ClientActionKind.SHELL_COMMAND,
-        ClientActionKind.START_PLAN,
-        ClientActionKind.EXECUTE_PLAN,
         ClientActionKind.HEARTBEAT,
         ClientActionKind.RUN_INFERENCE_START,
         ClientActionKind.RUN_INFERENCE_FINISH,
@@ -70,6 +77,8 @@ def delivery_for(action: ClientActionKind) -> MessageDelivery:
         return MessageDelivery.BREAK
     if action in CANCEL_ACTIONS:
         return MessageDelivery.CANCEL
+    if action in ERROR_ACTIONS:
+        return MessageDelivery.ERROR
     return MessageDelivery.IGNORE
 
 
@@ -86,11 +95,44 @@ def compile_append(append: ClientAppend) -> CompiledAction:
     if delivery is MessageDelivery.IGNORE:
         return CompiledAction(delivery=delivery, command=None, event_id=event_id)
 
+    if delivery is MessageDelivery.ERROR:
+        messages = [
+            Message(
+                id=new_id("msg"),
+                role=MessageRole.USER,
+                content=(
+                    append.text
+                    or f"[unsupported action {append.action.value}: "
+                    "cursor-switch does not execute ShellCommandAction mid-run]"
+                ),
+            )
+        ]
+        return CompiledAction(
+            delivery=MessageDelivery.BREAK,
+            command=BreakMessages(
+                messages=messages,
+                command_id=event_id,
+                target_run_id=append.target_run_id,
+            ),
+            event_id=event_id,
+        )
+
+    if append.action is ClientActionKind.RESUME:
+        content = append.text or "[resume] continue from checkpoint with refreshed request_context"
+    elif append.action is ClientActionKind.START_PLAN:
+        content = append.text or "[plan] start planning"
+    elif append.action is ClientActionKind.EXECUTE_PLAN:
+        content = append.text or "[plan] execute the current plan"
+    elif append.action is ClientActionKind.SUMMARIZE:
+        content = append.text or "[summarize] compress conversation context"
+    else:
+        content = append.text or f"[{append.action.value}]"
+
     messages = [
         Message(
             id=new_id("msg"),
             role=MessageRole.USER,
-            content=append.text or f"[{append.action.value}]",
+            content=content,
         )
     ]
     if delivery is MessageDelivery.INSERT:

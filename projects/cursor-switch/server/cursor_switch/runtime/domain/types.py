@@ -47,18 +47,19 @@ class Usage:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class Message:
     id: str
     role: MessageRole
     content: str
     tool_call_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ToolCall:
-    id: str
-    name: str
-    arguments: dict[str, Any] = field(default_factory=dict)
+    tool_calls: tuple[ToolCall, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

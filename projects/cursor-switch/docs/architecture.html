@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cursor-switch 技术架构</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg2: #161a22;
+    --bg3: #1c2230;
+    --stroke: #2a3344;
+    --stroke2: #3a4660;
+    --text: #e6ebf2;
+    --muted: #8b97ad;
+    --accent: #5b9fd4;
+    --accent2: #6dbf8a;
+    --warn: #d4a35b;
+    --danger: #d46b6b;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: "PingFang SC", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font: 14px/1.55 var(--sans);
+    color: var(--text);
+    background: var(--bg);
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: var(--mono); font-size: 12.5px; }
+  .top {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 12px 20px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--stroke);
+  }
+  .top h1 { margin: 0; font-size: 16px; font-weight: 500; }
+  .top .tag {
+    color: var(--muted); font-size: 12px;
+    padding: 2px 8px; border: 1px solid var(--stroke); border-radius: 4px;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    min-height: calc(100vh - 49px);
+  }
+  nav {
+    position: sticky; top: 49px; align-self: start;
+    height: calc(100vh - 49px); overflow: auto;
+    padding: 16px 12px;
+    border-right: 1px solid var(--stroke);
+    background: var(--bg);
+  }
+  nav a {
+    display: block; padding: 6px 10px; color: var(--muted);
+    border-radius: 4px; margin-bottom: 2px;
+  }
+  nav a:hover, nav a.active { color: var(--text); background: var(--bg3); text-decoration: none; }
+  main { padding: 24px 28px 80px; max-width: 1100px; }
+  section { margin-bottom: 48px; scroll-margin-top: 64px; }
+  h2 {
+    margin: 0 0 8px; font-size: 20px; font-weight: 500;
+    padding-bottom: 8px; border-bottom: 1px solid var(--stroke);
+  }
+  h3 { margin: 24px 0 10px; font-size: 15px; font-weight: 500; color: var(--accent); }
+  p.lead { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+  p.note {
+    margin: 10px 0 0; padding: 8px 12px;
+    background: var(--bg2); border-left: 3px solid var(--stroke2);
+    color: var(--muted); font-size: 13px;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--stroke); display: flex; flex-wrap: wrap; gap: 4px; }
+    .grid2, .grid3 { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--bg2); border: 1px solid var(--stroke); border-radius: 6px; padding: 12px 14px;
+  }
+  .card h4 { margin: 0 0 6px; font-size: 13px; font-weight: 500; }
+  .card .meta { color: var(--muted); font-size: 12px; }
+  .stat-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0 20px; }
+  .stat {
+    background: var(--bg2); border: 1px solid var(--stroke); border-radius: 6px;
+    padding: 10px 14px; min-width: 120px;
+  }
+  .stat .n { font-size: 22px; font-weight: 500; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .stat .l { font-size: 12px; color: var(--muted); }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+    background: var(--bg2); border: 1px solid var(--stroke); border-radius: 6px; overflow: hidden;
+  }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--stroke); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; background: var(--bg3); }
+  tr:last-child td { border-bottom: 0; }
+  td.path, .path { font-family: var(--mono); font-size: 12px; color: var(--accent2); }
+  .tree {
+    font-family: var(--mono); font-size: 12px; line-height: 1.45;
+    background: var(--bg2); border: 1px solid var(--stroke); border-radius: 6px;
+    padding: 14px 16px; overflow-x: auto; white-space: pre;
+  }
+  .tree .c { color: var(--muted); }
+  .tree .d { color: var(--accent); }
+  .tree .f { color: var(--text); }
+  .flow {
+    display: flex; flex-direction: column; gap: 0;
+    background: var(--bg2); border: 1px solid var(--stroke); border-radius: 6px; padding: 16px;
+  }
+  .flow-row {
+    display: grid; grid-template-columns: 110px 1fr; gap: 12px; align-items: stretch;
+    min-height: 44px;
+  }
+  .flow-actor {
+    font-size: 12px; color: var(--muted); padding-top: 10px; font-family: var(--mono);
+  }
+  .flow-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 0; }
+  .chip {
+    display: inline-block; padding: 5px 9px; border-radius: 4px;
+    background: var(--bg3); border: 1px solid var(--stroke2); font-size: 12px;
+  }
+  .chip.a { border-color: var(--accent); color: var(--accent); }
+  .chip.g { border-color: var(--accent2); color: var(--accent2); }
+  .chip.w { border-color: var(--warn); color: var(--warn); }
+  .chip.r { border-color: var(--danger); color: var(--danger); }
+  .arrow { color: var(--muted); font-size: 12px; }
+  .lane {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 8px;
+  }
+  .lane .box {
+    background: var(--bg3); border: 1px solid var(--stroke); border-radius: 6px; padding: 10px;
+    font-size: 12px; min-height: 72px;
+  }
+  .lane .box strong { display: block; margin-bottom: 4px; font-weight: 500; color: var(--accent); }
+  .lane .box code { color: var(--accent2); }
+  .topo {
+    display: grid; grid-template-columns: 1fr; gap: 8px;
+    font-family: var(--mono); font-size: 12.5px;
+    background: var(--bg2); border: 1px solid var(--stroke); border-radius: 6px; padding: 16px;
+  }
+  .topo .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .topo .box {
+    border: 1px solid var(--stroke2); background: var(--bg3);
+    padding: 10px 12px; border-radius: 6px; min-width: 140px;
+  }
+  .topo .box.hl { border-color: var(--accent); }
+  .topo .v { width: 100%; text-align: center; color: var(--muted); padding: 2px 0; }
+  .pill {
+    display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 3px;
+    background: var(--bg); color: var(--muted); border: 1px solid var(--stroke); margin-left: 4px;
+  }
+  ul.compact { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+  ul.compact li { margin: 2px 0; }
+  .two-col-tree { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 900px) { .two-col-tree { grid-template-columns: 1fr; } .lane { grid-template-columns: 1fr 1fr; } }
+  footer { margin-top: 40px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>cursor-switch 技术架构</h1>
+  <span class="tag">代码为准 · docs/*.md 为辅</span>
+  <span class="tag">实测行数 · 2026-11-14</span>
+</header>
+<div class="layout">
+<nav id="nav">
+  <a href="#overview">总览</a>
+  <a href="#tree">目录与职责</a>
+  <a href="#stack">技术栈</a>
+  <a href="#design">设计思路</a>
+  <a href="#flows">数据与控制流</a>
+  <a href="#api">控制面 API</a>
+  <a href="#data">持久化</a>
+  <a href="#packaging">打包与发布</a>
+  <a href="#docs">相关文档</a>
+</nav>
+<main>
+
+<section id="overview">
+  <h2>总览</h2>
+  <p class="lead">本机网关：Electron 桌面拉起 FastAPI 控制面；开启接管后，本地 HTTPS MITM 只劫持 <code>*.cursor.sh</code>，Agent 请求在本机编排后发往自配上游，Tab / 未实现 RPC 原样转发官方。</p>
+
+  <div class="stat-row">
+    <div class="stat"><div class="n">9.1k</div><div class="l">desktop src 行</div></div>
+    <div class="stat"><div class="n">7.5k</div><div class="l">server 行</div></div>
+    <div class="stat"><div class="n">5.6k</div><div class="l">adapters 行</div></div>
+    <div class="stat"><div class="n">1.4k</div><div class="l">tests 行</div></div>
+    <div class="stat"><div class="n">8787</div><div class="l">控制面端口</div></div>
+    <div class="stat"><div class="n">8788</div><div class="l">默认代理端口</div></div>
+  </div>
+
+  <h3>进程拓扑</h3>
+  <div class="topo">
+    <div class="row">
+      <div class="box hl">Electron 主进程<br/><span class="meta" style="color:var(--muted)">apps/desktop/electron/main.mjs · 199L</span><br/>探活 / 拉起 sidecar · 窗口 · 托盘</div>
+      <div class="box">React 渲染进程<br/><span style="color:var(--muted)">apps/desktop/src · 8912L</span><br/>只调 loopback HTTP</div>
+    </div>
+    <div class="v">▼ CONTROL_URL = http://127.0.0.1:8787</div>
+    <div class="row">
+      <div class="box hl">FastAPI 控制面<br/><span style="color:var(--muted)">control/app.py · create_app()</span><br/>/api/* · /healthz · Cursor 路由挂载</div>
+    </div>
+    <div class="v">▼ AppServices (control/deps.py)</div>
+    <div class="row">
+      <div class="box">app/*<br/>models · settings<br/>usage · harness</div>
+      <div class="box">runtime/*<br/>session · ports<br/>domain</div>
+      <div class="box">adapters/*<br/>cursor · local_access<br/>providers · persistence</div>
+    </div>
+    <div class="v">▼ 开启接管后</div>
+    <div class="row">
+      <div class="box">Cursor IDE<br/>http.proxy → 127.0.0.1:8788</div>
+      <div class="box hl">CursorProxy MITM<br/><span style="color:var(--muted)">local_access/proxy.py · 587L</span></div>
+      <div class="box">上游模型<br/>Chat / Responses / Anthropic</div>
+      <div class="box">SQLite<br/>~/.cursor-switch/</div>
+    </div>
+  </div>
+  <p class="note">默认路径：DB <code>~/.cursor-switch/cursor-switch.db</code> · CA <code>~/.cursor-switch/ca/</code> · 控制面仅监听 127.0.0.1。</p>
+</section>
+
+<section id="tree">
+  <h2>目录与职责</h2>
+  <p class="lead">行数排除 <code>node_modules</code> / <code>.venv</code> / <code>release</code> / 二进制资源。职责一句话对应实际包边界。</p>
+
+  <div class="tree"><span class="d">apps/desktop/</span>                      <span class="c"># Electron + Vite/React · 9129L</span>
+  <span class="d">electron/main.mjs</span>               <span class="c"># 主进程：探活、spawn 后端、窗口/托盘 · 199L</span>
+  <span class="d">src/</span>
+    <span class="d">features/</span>                     <span class="c"># 页面域 · 3694L</span>
+      <span class="d">home/</span>                       <span class="c"># 用量概览 · HomePage 192L</span>
+      <span class="d">models/</span>                     <span class="c"># CA/接管/模型编辑 · CursorSettingsPage 420L</span>
+      <span class="d">calls/</span>                      <span class="c"># 调用记录</span>
+      <span class="d">settings/</span>                   <span class="c"># 端口/代理/路径/提交信息</span>
+    <span class="d">shell/</span>                       <span class="c"># 布局壳 · 238L</span>
+    <span class="d">shared/</span>                      <span class="c"># store/ui/theme · 4442L</span>
+    <span class="d">api/</span>                         <span class="c"># 控制面 client · 389L</span>
+    <span class="f">App.tsx</span>                       <span class="c"># HashRouter 路由 · 48L</span>
+
+<span class="d">server/cursor_switch/</span>               <span class="c"># Python 后端 · 7521L</span>
+  <span class="d">control/</span>                       <span class="c"># FastAPI 入口 · 904L</span>
+    <span class="f">app.py</span>                        <span class="c"># create_app · 挂载路由 · 56L</span>
+    <span class="f">deps.py</span>                       <span class="c"># build_services 装配 · 150L</span>
+    <span class="d">routes/</span>                     <span class="c"># health/models/settings/usage · 554L</span>
+  <span class="d">app/</span>                           <span class="c"># 应用服务 · 499L</span>
+    <span class="f">models.py / settings.py / usage.py / harness.py</span>
+  <span class="d">runtime/</span>                      <span class="c"># 领域核心 · 509L</span>
+    <span class="d">domain/ ports/ session/</span>
+  <span class="d">adapters/</span>                     <span class="c"># 端口实现 · 5606L</span>
+    <span class="d">cursor/</span>                     <span class="c"># 网关/协议 · 2769L · routes 496L</span>
+    <span class="d">local_access/</span>               <span class="c"># CA/MITM/settings.json · 1122L</span>
+    <span class="d">providers/</span>                  <span class="c"># 上游策略 · 749L</span>
+    <span class="d">persistence/</span>                <span class="c"># SQLAlchemy · 503L</span>
+    <span class="d">tools/ + search/</span>            <span class="c"># 工具分发 · 代码检索</span>
+
+<span class="d">packaging/</span>                          <span class="c"># PyInstaller · 334L</span>
+<span class="d">tools/</span>                              <span class="c"># 协议提取/抓包 · 457L · 不进产品</span>
+<span class="d">tests/</span>                              <span class="c"># pytest · 1368L</span>
+<span class="d">docs/</span>                               <span class="c"># 设计 Markdown + 本文</span>
+<span class="d">protocols/</span>                          <span class="c"># 协议产物目录</span></div>
+
+  <h3>前端路由 → 页面文件</h3>
+  <table>
+    <thead><tr><th>Hash 路由</th><th>组件</th><th>路径</th></tr></thead>
+    <tbody>
+      <tr><td class="path">/</td><td>HomePage</td><td class="path">features/home/HomePage.tsx</td></tr>
+      <tr><td class="path">/harness/cursor</td><td>CursorSettingsPage</td><td class="path">features/models/CursorSettingsPage.tsx</td></tr>
+      <tr><td class="path">/calls</td><td>CallsPage</td><td class="path">features/calls/CallsPage.tsx</td></tr>
+      <tr><td class="path">/calls/:callId</td><td>CallDetailsPage</td><td class="path">features/calls/CallDetailsPage.tsx</td></tr>
+      <tr><td class="path">/settings</td><td>SettingsPage</td><td class="path">features/settings/SettingsPage.tsx</td></tr>
+    </tbody>
+  </table>
+
+  <h3>后端 adapters 关键文件</h3>
+  <div class="grid3">
+    <div class="card">
+      <h4>local_access</h4>
+      <div class="meta path">proxy.py 587L · ca.py 204L</div>
+      <ul class="compact">
+        <li>facade.py — LocalAccessFacade</li>
+        <li>routing.py — LOCAL_PATHS / TAB_PATHS</li>
+        <li>cursor_settings.py — 写 settings.json</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>cursor</h4>
+      <div class="meta path">routes.py 496L · gateway.py 285L</div>
+      <ul class="compact">
+        <li>run_inference.py · connect.py · compile.py</li>
+        <li>services/model_catalog.py — 合并上游目录</li>
+        <li>transport / envelope / agent_ws_frames</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>providers</h4>
+      <div class="meta path">router.py → ModelPort</div>
+      <ul class="compact">
+        <li>openai_chat.py</li>
+        <li>openai_responses.py</li>
+        <li>anthropic.py · retry.py · tester.py</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="stack">
+  <h2>技术栈</h2>
+  <p class="lead">选型对应到仓库文件，而非抽象愿望清单。</p>
+  <table>
+    <thead><tr><th>层</th><th>技术</th><th>代码落点</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td>桌面壳</td><td>Electron</td><td class="path">apps/desktop/electron/main.mjs</td><td>窗口、托盘、spawn 后端</td></tr>
+      <tr><td>UI</td><td>React + TS + Vite</td><td class="path">apps/desktop/src</td><td>控制台页面</td></tr>
+      <tr><td>控制面</td><td>FastAPI + Uvicorn</td><td class="path">control/app.py · main.py</td><td>HTTP API + 挂载 Cursor 路由</td></tr>
+      <tr><td>上游 HTTP</td><td>httpx</td><td class="path">adapters/providers/*</td><td>SSE 流、出站代理</td></tr>
+      <tr><td>持久化</td><td>SQLAlchemy 2 + aiosqlite</td><td class="path">adapters/persistence/*</td><td>models/calls/settings</td></tr>
+      <tr><td>TLS / CA</td><td>cryptography</td><td class="path">adapters/local_access/ca.py</td><td>本地 CA、叶证书</td></tr>
+      <tr><td>协议</td><td>protobuf</td><td class="path">adapters/cursor/*</td><td>Cursor Connect / Agent</td></tr>
+      <tr><td>打包后端</td><td>PyInstaller</td><td class="path">packaging/cursor-switch-server.spec</td><td>sidecar 二进制</td></tr>
+      <tr><td>打包前端</td><td>electron-builder</td><td class="path">apps/desktop/package.json</td><td>dmg / nsis</td></tr>
+      <tr><td>语言</td><td>Python ≥3.12</td><td class="path">pyproject.toml</td><td>requires-python</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="design">
+  <h2>设计思路</h2>
+  <p class="lead">原则很短；细节见 Markdown。代码里已落地的模式如下。</p>
+  <div class="grid2">
+    <div class="card">
+      <h4>端口与适配器</h4>
+      <p class="meta"><code>runtime/ports/*</code> ← <code>adapters/*</code> 实现。会话核心不 import protobuf / httpx / SQLAlchemy。</p>
+    </div>
+    <div class="card">
+      <h4>策略：上游协议</h4>
+      <p class="meta"><code>ProviderRouter</code> 按 <code>provider_type</code> 选 Chat / Responses / Anthropic，统一 <code>ModelPort.stream</code>。</p>
+    </div>
+    <div class="card">
+      <h4>外观：本机接入</h4>
+      <p class="meta"><code>LocalAccessFacade</code> 收口 CA、代理启停、写 Cursor <code>settings.json</code>。</p>
+    </div>
+    <div class="card">
+      <h4>空对象：遥测</h4>
+      <p class="meta"><code>NullTelemetry</code> + 固定 IsConnected，不采集不上报。</p>
+    </div>
+    <div class="card">
+      <h4>分流：本地 vs 官方</h4>
+      <p class="meta"><code>routing.py</code> 的 <code>LOCAL_PATHS</code> / <code>TAB_PATHS</code>；Tab 永不本地实现。</p>
+    </div>
+    <div class="card">
+      <h4>装配：AppServices</h4>
+      <p class="meta"><code>build_services()</code> 一次接线；lifespan 停代理、dispose engine。</p>
+    </div>
+  </div>
+  <p class="note">完整叙述：<a href="./design.md">design.md</a> · 模块边界：<a href="./modules.md">modules.md</a> · Agent 下行现为 <code>AgentServerMessage</code> protobuf（对照 byok）；工具主路径为 Cursor client-exec。</p>
+</section>
+
+
+<section id="flows">
+  <h2>数据与控制流</h2>
+  <p class="lead">三条主路径，箭头上的名字均为代码中的符号或路径。</p>
+
+  <h3>流程 A — 桌面启动 → 控制面就绪</h3>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-actor">Electron</div>
+      <div class="flow-steps">
+        <span class="chip a">ensureBackend()</span>
+        <span class="arrow">→</span>
+        <span class="chip">GET /healthz</span>
+        <span class="arrow">失败则</span>
+        <span class="chip w">spawn python -m cursor_switch.control.main</span>
+        <span class="arrow">或</span>
+        <span class="chip w">resources/.../cursor-switch-server</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-actor">FastAPI</div>
+      <div class="flow-steps">
+        <span class="chip a">lifespan → build_services()</span>
+        <span class="arrow">→</span>
+        <span class="chip">init_schema</span>
+        <span class="arrow">→</span>
+        <span class="chip g">AppServices 就绪</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-actor">Renderer</div>
+      <div class="flow-steps">
+        <span class="chip">api/client.ts</span>
+        <span class="arrow">→</span>
+        <span class="chip a">/api/models · /api/overview · /api/harness/...</span>
+      </div>
+    </div>
+  </div>
+
+  <h3>流程 B — 开启接管（Harness）</h3>
+  <div class="lane">
+    <div class="box"><strong>1. UI</strong>CursorGates / CursorSettingsPage<br/>PUT <code>/api/harness/cursor/enabled</code></div>
+    <div class="box"><strong>2. HarnessService</strong><code>app/harness.py</code><br/>读 ports → facade</div>
+    <div class="box"><strong>3. LocalAccessFacade</strong><code>set_enabled(True)</code><br/>proxy.start(8788)</div>
+    <div class="box"><strong>4. cursor_settings</strong>写 <code>http.proxy</code><br/><code>http.proxySupport=on</code></div>
+    <div class="box"><strong>5. Cursor</strong>完全退出重启<br/>流量进 MITM</div>
+  </div>
+  <p class="note">关闭接管：停代理 + 清掉 PROXY_KEYS。CA 初始化：<code>POST /api/harness/cursor/ca/initialize</code> → <code>CaManager</code> → <code>~/.cursor-switch/ca/ca.crt</code>。</p>
+
+  <h3>流程 C — Cursor Agent 请求（核心）</h3>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-actor">Cursor</div>
+      <div class="flow-steps">
+        <span class="chip">HTTPS *.cursor.sh</span>
+        <span class="arrow">→</span>
+        <span class="chip a">CursorProxy :8788</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-actor">routing.py</div>
+      <div class="flow-steps">
+        <span class="chip">is_cursor_host?</span>
+        <span class="arrow">→</span>
+        <span class="chip g">LOCAL_PATHS → http://127.0.0.1:8787{path}</span>
+        <span class="arrow">|</span>
+        <span class="chip w">TAB_PATHS → https://官方</span>
+        <span class="arrow">|</span>
+        <span class="chip">其它 → 官方</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-actor">cursor/routes</div>
+      <div class="flow-steps">
+        <span class="chip a">BidiAppend</span>
+        <span class="arrow">/</span>
+        <span class="chip a">RunSSE</span>
+        <span class="arrow">/</span>
+        <span class="chip a">WS /agent/v1/run</span>
+        <span class="arrow">→</span>
+        <span class="chip">CursorGateway</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-actor">runtime</div>
+      <div class="flow-steps">
+        <span class="chip">compile / session</span>
+        <span class="arrow">→</span>
+        <span class="chip a">ModelPort.stream</span>
+        <span class="arrow">→</span>
+        <span class="chip g">ProviderRouter</span>
+        <span class="arrow">→</span>
+        <span class="chip">上游 SSE</span>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-actor">回写</div>
+      <div class="flow-steps">
+        <span class="chip">envelope / transport</span>
+        <span class="arrow">→</span>
+        <span class="chip a">SSE / WS 下行</span>
+        <span class="arrow">→</span>
+        <span class="chip">on_call_finished → calls 表</span>
+      </div>
+    </div>
+  </div>
+
+  <h3>流程 D — 模型目录合并</h3>
+  <div class="flow">
+    <div class="flow-steps" style="padding:8px 0">
+      <span class="chip">AvailableModels / GetUsableModels</span>
+      <span class="arrow">→</span>
+      <span class="chip a">ModelCatalog</span>
+      <span class="arrow">→</span>
+      <span class="chip">带 UPSTREAM_URL_HEADER 拉官方目录</span>
+      <span class="arrow">→</span>
+      <span class="chip g">append 本地 models（不替换）</span>
+    </div>
+  </div>
+
+  <h3>模块交互（依赖方向）</h3>
+  <div class="tree"><span class="c">desktop-ui ──HTTP──► control-api ──► app-* ──► persistence</span>
+                         <span class="c">│</span>
+                         <span class="c">├── harness ──► local_access (CA / proxy / settings.json)</span>
+                         <span class="c">└── models  ──► ModelPort</span>
+                                              <span class="c">▲</span>
+<span class="c">Cursor ──MITM──► local_access ──► cursor-gateway ──► session-runtime</span>
+                         <span class="c">│                              │</span>
+                         <span class="c">│                              ├── ToolPort ──► tools / search</span>
+                         <span class="c">│                              └── ModelPort ──► providers ──► 上游</span>
+                         <span class="c">▼</span>
+<span class="c">未知路径 / Tab ──────────────────► 官方 api*.cursor.sh</span></div>
+</section>
+
+<section id="api">
+  <h2>控制面 API（代码登记）</h2>
+  <p class="lead">前缀来自各 router；Cursor 网关路由无 <code>/api</code> 前缀，与控制 API 同进程同端口。</p>
+
+  <h3>桌面控制 API</h3>
+  <table>
+    <thead><tr><th>方法</th><th>路径</th><th>文件</th></tr></thead>
+    <tbody>
+      <tr><td>GET</td><td class="path">/healthz</td><td class="path">routes/health.py</td></tr>
+      <tr><td>CRUD</td><td class="path">/api/models … /test /discover /order /group</td><td class="path">routes/models.py</td></tr>
+      <tr><td>GET/PUT</td><td class="path">/api/settings/ports|proxy|desktop|observation|tab|cursor-path|commit|pricing</td><td class="path">routes/settings.py</td></tr>
+      <tr><td>GET/POST/PUT</td><td class="path">/api/harness/cursor/status|ca/initialize|enabled|mode|traffic</td><td class="path">routes/settings.py</td></tr>
+      <tr><td>GET/POST/DELETE</td><td class="path">/api/overview · /api/calls · /api/storage</td><td class="path">routes/usage.py</td></tr>
+    </tbody>
+  </table>
+
+  <h3>本机处理的 Cursor 路径（节选 LOCAL_PATHS）</h3>
+  <table>
+    <thead><tr><th>类别</th><th>路径</th><th>处理</th></tr></thead>
+    <tbody>
+      <tr><td>Agent</td><td class="path">/agent/v1/run · RunSSE · RunInferenceSSE · BidiAppend</td><td>gateway / WS / SSE</td></tr>
+      <tr><td>模型目录</td><td class="path">AvailableModels · GetUsableModels · GetDefaultModel*</td><td>ModelCatalog 合并</td></tr>
+      <tr><td>账号外观</td><td class="path">GetMe · GetEmail · stripe_profile · usage stubs</td><td>AccountFacade</td></tr>
+      <tr><td>知识库</td><td class="path">KnowledgeBase*</td><td>KnowledgeStore</td></tr>
+      <tr><td>连通/遥测</td><td class="path">IsConnected · BootstrapStatsig</td><td>固定成功 / 空对象</td></tr>
+      <tr><td>Tab（不本地）</td><td class="path">StreamCpp · Cpp* · FileSync*</td><td>转发官方</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="data">
+  <h2>持久化</h2>
+  <p class="lead">定义：<code>adapters/persistence/models.py</code> · 引擎：<code>db.py</code> · 默认 URL：<code>sqlite+aiosqlite:///~/.cursor-switch/cursor-switch.db</code></p>
+
+  <div class="grid3">
+    <div class="card">
+      <h4>models</h4>
+      <div class="meta">ModelRow</div>
+      <ul class="compact">
+        <li>id, display_name, provider_type</li>
+        <li>base_url, api_key, model_name</li>
+        <li>context/max_output, enabled, sort_order</li>
+        <li>extra_json, headers_json, group_name</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>calls</h4>
+      <div class="meta">CallRow</div>
+      <ul class="compact">
+        <li>model_id, status, 时延字段</li>
+        <li>input/output/cache tokens</li>
+        <li>detailed → request_json / response_text</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>settings</h4>
+      <div class="meta">SettingsRow · key/value_json</div>
+      <ul class="compact">
+        <li>ports, proxy, desktop, tab</li>
+        <li>cursor_path, commit, pricing…</li>
+        <li>KV 扩展，非宽表</li>
+      </ul>
+    </div>
+  </div>
+  <p class="note">旁路：代码搜索可用内存 SQLite（<code>CodeSearchIndex</code>）；协议抓包独立库 <code>~/.cursor-switch/protocol-capture.db</code>（tools，非产品路径）。</p>
+</section>
+
+<section id="packaging">
+  <h2>打包与发布</h2>
+  <div class="lane" style="grid-template-columns: repeat(4, 1fr);">
+    <div class="box"><strong>1. 冻结后端</strong><code>packaging/build-server.sh</code><br/>micromamba 3.12 @ /tmp<br/>扫描拒绝 /Users/</div>
+    <div class="box"><strong>2. sidecar</strong><code>cursor-switch-server</code><br/>进 electron resources</div>
+    <div class="box"><strong>3. 打桌面包</strong><code>npm run dist:mac|win</code><br/>dmg / nsis</div>
+    <div class="box"><strong>4. CI</strong><code>.github/workflows/release.yml</code><br/>tag v* · mac+win</div>
+  </div>
+  <table style="margin-top:14px">
+    <thead><tr><th>模式</th><th>后端启动</th></tr></thead>
+    <tbody>
+      <tr><td>开发</td><td class="path">python -m cursor_switch.control.main --host 127.0.0.1 --port 8787</td></tr>
+      <tr><td>安装包</td><td class="path">resources/cursor-switch-server/cursor-switch-server[.exe]</td></tr>
+    </tbody>
+  </table>
+  <p class="note">当前 CI 产物未公证/未签名。构建中性目录：mac/linux <code>/tmp/cursor-switch-build</code>，Windows <code>%SystemDrive%\cursor-switch-build</code>。</p>
+</section>
+
+<section id="docs">
+  <h2>相关文档</h2>
+  <table>
+    <thead><tr><th>文档</th><th>内容</th></tr></thead>
+    <tbody>
+      <tr><td><a href="../README.md">README.md</a></td><td>安装、启动、接入 Cursor、打包命令</td></tr>
+      <tr><td><a href="./design.md">design.md</a></td><td>范围、进程、框架选型、设计模式叙述</td></tr>
+      <tr><td><a href="./modules.md">modules.md</a></td><td>模块切分、依赖方向、解耦验收</td></tr>
+      <tr><td><a href="./roadmap.md">roadmap.md</a></td><td>实现路线</td></tr>
+      <tr><td><a href="./protocol-tools.md">protocol-tools.md</a></td><td>协议提取与抓包工具</td></tr>
+      <tr><td><a href="./architecture.html">architecture.html</a></td><td>本文（可视化，代码地图）</td></tr>
+    </tbody>
+  </table>
+  <footer>行数与路径以生成当日仓库为准。代码变更后请对照目录重测；叙事性说明以 design/modules 为准并回写本文图表。</footer>
+</section>
+
+</main>
+</div>
+<script>
+  const links = [...document.querySelectorAll("nav a")];
+  const sections = links.map((a) => document.querySelector(a.getAttribute("href"))).filter(Boolean);
+  const io = new IntersectionObserver((entries) => {
+    const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+    if (!visible) return;
+    links.forEach((a) => a.classList.toggle("active", a.getAttribute("href") === "#" + visible.target.id));
+  }, { rootMargin: "-20% 0px -60% 0px", threshold: [0, 0.2, 0.6] });
+  sections.forEach((s) => io.observe(s));
+</script>
+</body>
+</html>

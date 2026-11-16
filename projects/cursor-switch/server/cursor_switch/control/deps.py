@@ -8,11 +8,13 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from cursor_switch.adapters.cursor.checkpoints import SqliteCheckpoints
 from cursor_switch.adapters.cursor.gateway import CursorGateway
 from cursor_switch.adapters.cursor.services.account import AccountFacade
 from cursor_switch.adapters.cursor.services.knowledge import KnowledgeStore
 from cursor_switch.adapters.cursor.services.model_catalog import ModelCatalog
 from cursor_switch.adapters.cursor.services.telemetry import NullTelemetry
+from cursor_switch.adapters.cursor.tools.client_exec import ClientExecDispatcher
 from cursor_switch.adapters.local_access.ca import CaManager
 from cursor_switch.adapters.local_access.facade import LocalAccessFacade
 from cursor_switch.adapters.local_access.proxy import CursorProxy
@@ -24,7 +26,6 @@ from cursor_switch.adapters.persistence.db import (
 from cursor_switch.adapters.persistence.unit_of_work import UnitOfWorkFactory
 from cursor_switch.adapters.providers.base import ProviderConfig
 from cursor_switch.adapters.search.index import CodeSearchIndex
-from cursor_switch.adapters.tools.dispatch import ToolDispatcher
 from cursor_switch.adapters.tools.handlers import default_handlers
 from cursor_switch.app.harness import HarnessService
 from cursor_switch.app.models import ModelService, to_provider_config
@@ -125,10 +126,12 @@ async def build_services(
         )
     search_index = CodeSearchIndex()
     await search_index.init()
-    tools = ToolDispatcher(handlers=default_handlers(search_index=search_index))
+    tools = ClientExecDispatcher(handlers=default_handlers(search_index=search_index))
+    checkpoints = SqliteCheckpoints()
     gateway = CursorGateway(
         model=model,
         tools=tools,
+        checkpoints=checkpoints,
         model_lookup=None if model is not None else index.lookup,
         known_model_ids=index.known_ids,
         on_call_finished=None if model is not None else on_call_finished,

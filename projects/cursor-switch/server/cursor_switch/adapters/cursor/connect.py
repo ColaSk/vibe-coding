@@ -60,21 +60,24 @@ def decode_frames(body: bytes) -> list[tuple[int, bytes]]:
 
 
 def decode_unary(body: bytes) -> bytes:
-    """Accept Connect-framed or raw protobuf bodies.
+    """Accept Connect-framed, gzip, or raw protobuf bodies.
 
-    Flag bit 0 means the payload is gzip-compressed. Treating that payload as
-    raw protobuf mis-parses and raises ``unsupported wire type``.
+    Flag bit 0 means the payload is gzip-compressed. Cursor also sometimes
+    posts a bare gzip body (magic ``1f 8b``) with no Connect envelope; treating
+    that as protobuf raises ``unsupported wire type``.
     """
+    import gzip
+
     if len(body) >= 5:
         flags = body[0]
         length = struct.unpack(">I", body[1:5])[0]
         if flags & END_STREAM_FLAG == 0 and length == len(body) - 5:
             payload = body[5:]
-            if flags & 0x01:
-                import gzip
-
+            if flags & 0x01 or payload.startswith(b"\x1f\x8b"):
                 payload = gzip.decompress(payload)
             return payload
+    if body.startswith(b"\x1f\x8b"):
+        return gzip.decompress(body)
     return body
 
 

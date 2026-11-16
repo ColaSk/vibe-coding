@@ -25,7 +25,9 @@ def test_delivery_mapping() -> None:
     assert delivery_for(ClientActionKind.USER_MESSAGE) is MessageDelivery.BREAK
     assert delivery_for(ClientActionKind.BACKGROUND_TASK) is MessageDelivery.INSERT
     assert delivery_for(ClientActionKind.CANCEL) is MessageDelivery.CANCEL
-    assert delivery_for(ClientActionKind.SUMMARIZE) is MessageDelivery.IGNORE
+    assert delivery_for(ClientActionKind.SUMMARIZE) is MessageDelivery.BREAK
+    assert delivery_for(ClientActionKind.RESUME) is MessageDelivery.INSERT
+    assert delivery_for(ClientActionKind.START_PLAN) is MessageDelivery.BREAK
 
 
 def test_local_model_id_accepts_variant_suffixes() -> None:
@@ -84,15 +86,19 @@ def test_bidi_append_streams_model_events(tmp_path: Path) -> None:
             assert stream.status_code == 200
             raw = b"".join(stream.iter_bytes())
 
+    from cursor_switch.adapters.cursor.pb import agent_v1_pb2 as pb
+
     frames = decode_frames(raw)
     assert frames
-    kinds = []
+    interaction_kinds = []
     for flags, payload in frames:
         if flags & 0x02:
             continue
-        kinds.append(json.loads(payload.decode("utf-8"))["kind"])
-    assert "text_delta" in kinds
-    assert "end" in kinds
+        msg = pb.AgentServerMessage.FromString(payload)
+        assert msg.WhichOneof("message") == "interaction_update"
+        interaction_kinds.append(msg.interaction_update.WhichOneof("message"))
+    assert "text_delta" in interaction_kinds
+    assert "turn_ended" in interaction_kinds
 
 
 def _agent_run_request_hex(*, text: str, model_id: str, conversation_id: str) -> str:
@@ -154,11 +160,14 @@ def test_bidi_append_accepts_agent_client_protobuf(tmp_path: Path) -> None:
         ) as stream:
             assert stream.status_code == 200
             raw = b"".join(stream.iter_bytes())
-    kinds = [
-        json.loads(payload.decode("utf-8"))["kind"]
-        for flags, payload in decode_frames(raw)
-        if not (flags & 0x02)
-    ]
+    from cursor_switch.adapters.cursor.pb import agent_v1_pb2 as pb
+
+    kinds = []
+    for flags, payload in decode_frames(raw):
+        if flags & 0x02:
+            continue
+        msg = pb.AgentServerMessage.FromString(payload)
+        kinds.append(msg.interaction_update.WhichOneof("message"))
     assert "text_delta" in kinds
 
 

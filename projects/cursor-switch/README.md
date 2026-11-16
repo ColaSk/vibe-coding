@@ -4,6 +4,7 @@
 
 设计文档：
 
+- [技术架构（可视化）](docs/architecture.html) — 代码地图、数据流、目录行数
 - [设计方案](docs/design.md)
 - [模块抽象](docs/modules.md)
 - [实现路线](docs/roadmap.md)

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from typing import Any
 
 from cursor_switch.adapters.cursor.proto_min import (
     encode_bool,
     encode_bytes,
+    encode_int64,
     encode_message_field,
     encode_string,
     iter_fields,
@@ -21,7 +24,9 @@ class RunInferenceAppend:
     routing_text: str = ""
     agent_mode: str = ""
     invocation_id: str = ""
-    messages: list[tuple[str, str]] = field(default_factory=list)  # (role, text)
+    # {role, content, tool_call_id?, tool_calls?}
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    tools: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _field_bytes(data: bytes, field_no: int) -> bytes | None:
@@ -67,8 +72,80 @@ def _decode_text_part(part: bytes) -> str:
     return ""
 
 
-def _decode_message_text(message: bytes) -> str:
-    """InferenceCoreMessage content oneof: field 2 text, or field 3 parts."""
+def _decode_protobuf_value(raw: bytes) -> Any:
+    """Decode google.protobuf.Value into a Python object."""
+    for field, wire, value in iter_fields(raw):
+        if field == 1:  # null_value
+            return None
+        if field == 2 and wire == 1 and isinstance(value, bytes) and len(value) == 8:
+            import struct
+
+            return struct.unpack("<d", value)[0]
+        if field == 2 and wire == 0 and isinstance(value, int):
+            # Some encoders pack numbers as varint; keep as int.
+            return value
+        if field == 3 and wire == 2 and isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        if field == 4 and wire == 0 and isinstance(value, int):
+            return bool(value)
+        if field == 5 and wire == 2 and isinstance(value, bytes):
+            return _decode_struct(value)
+        if field == 6 and wire == 2 and isinstance(value, bytes):
+            return [
+                _decode_protobuf_value(item)
+                for f2, w2, item in iter_fields(value)
+                if f2 == 1 and w2 == 2 and isinstance(item, bytes)
+            ]
+    return None
+
+
+def _decode_struct(raw: bytes) -> dict[str, Any]:
+    """Decode google.protobuf.Struct { map<string, Value> fields = 1 }."""
+    out: dict[str, Any] = {}
+    for field, wire, value in iter_fields(raw):
+        if field != 1 or wire != 2 or not isinstance(value, bytes):
+            continue
+        key = ""
+        val: Any = None
+        for f2, w2, v2 in iter_fields(value):
+            if f2 == 1 and w2 == 2 and isinstance(v2, bytes):
+                key = v2.decode("utf-8", errors="replace")
+            elif f2 == 2 and w2 == 2 and isinstance(v2, bytes):
+                val = _decode_protobuf_value(v2)
+        if key:
+            out[key] = val
+    return out
+
+
+def _encode_protobuf_value(value: Any) -> bytes:
+    import struct
+
+    if value is None:
+        return encode_int64(1, 0)
+    if isinstance(value, bool):
+        return encode_bool(4, value)
+    if isinstance(value, (int, float)):
+        return b"\x11" + struct.pack("<d", float(value))  # field 2 wire 1
+    if isinstance(value, str):
+        return encode_string(3, value)
+    if isinstance(value, dict):
+        return encode_message_field(5, _encode_struct(value))
+    if isinstance(value, list):
+        items = b"".join(encode_message_field(1, _encode_protobuf_value(item)) for item in value)
+        return encode_message_field(6, items)
+    return encode_string(3, str(value))
+
+
+def _encode_struct(data: dict[str, Any]) -> bytes:
+    parts = bytearray()
+    for key, value in data.items():
+        entry = encode_string(1, key) + encode_message_field(2, _encode_protobuf_value(value))
+        parts.extend(encode_message_field(1, entry))
+    return bytes(parts)
+
+
+def _decode_text_content(message: bytes) -> str:
+    """InferenceCoreMessage text / parts content."""
     direct = _field_string(message, 2)
     if direct:
         return direct
@@ -84,9 +161,74 @@ def _decode_message_text(message: bytes) -> str:
     return "\n".join(chunks)
 
 
-def _decode_core_messages(request: bytes) -> list[tuple[str, str]]:
+def _decode_tool_calls(message: bytes) -> list[dict[str, Any]]:
+    """InferenceCoreMessage.tool_calls → OpenAI-ish tool call dicts."""
+    out: list[dict[str, Any]] = []
+    for field, wire, value in iter_fields(message):
+        if field != 4 or wire != 2 or not isinstance(value, bytes):
+            continue
+        call_id = _field_string(value, 1)
+        name = _field_string(value, 2)
+        args_raw = _field_bytes(value, 3)
+        raw_args = _field_string(value, 4)
+        arguments: dict[str, Any] = {}
+        if args_raw:
+            arguments = _decode_struct(args_raw) or {}
+        elif raw_args:
+            try:
+                parsed = json.loads(raw_args)
+                arguments = parsed if isinstance(parsed, dict) else {"raw": raw_args}
+            except Exception:
+                arguments = {"raw": raw_args}
+        if call_id or name:
+            out.append({"id": call_id or name, "name": name or "tool", "arguments": arguments})
+    return out
+
+
+def _decode_experimental_content(part: bytes) -> str:
+    """InferenceToolResultPart.experimental_content text parts."""
+    chunks: list[str] = []
+    for field, wire, value in iter_fields(part):
+        if field != 5 or wire != 2 or not isinstance(value, bytes):
+            continue
+        # InferenceContentPart { text: InferenceTextPart { text } }
+        text = _decode_text_part(value)
+        if text:
+            chunks.append(text)
+    return "\n".join(chunks)
+
+
+def _decode_tool_results(message: bytes) -> list[dict[str, str]]:
+    """InferenceToolResultContent parts with non-empty tool_call_id."""
+    out: list[dict[str, str]] = []
+    for field, wire, value in iter_fields(message):
+        if field != 6 or wire != 2 or not isinstance(value, bytes):
+            continue
+        for f2, w2, v2 in iter_fields(value):
+            if f2 != 1 or w2 != 2 or not isinstance(v2, bytes):
+                continue
+            tool_call_id = _field_string(v2, 1)
+            if not tool_call_id:
+                continue
+            text = ""
+            result_raw = _field_bytes(v2, 3)
+            if result_raw is not None:
+                decoded = _decode_protobuf_value(result_raw)
+                if decoded is not None and decoded != "":
+                    text = (
+                        decoded
+                        if isinstance(decoded, str)
+                        else json.dumps(decoded, ensure_ascii=False)
+                    )
+            if not text:
+                text = _decode_experimental_content(v2)
+            out.append({"tool_call_id": tool_call_id, "content": text})
+    return out
+
+
+def _decode_core_messages(request: bytes) -> list[dict[str, Any]]:
     role_names = {1: "user", 2: "assistant", 3: "tool", 4: "system"}
-    out: list[tuple[str, str]] = []
+    out: list[dict[str, Any]] = []
     for field, wire, value in iter_fields(request):
         if field != 1 or wire != 2 or not isinstance(value, bytes):
             continue
@@ -95,10 +237,66 @@ def _decode_core_messages(request: bytes) -> list[tuple[str, str]]:
             if f2 == 1 and w2 == 0 and isinstance(v2, int):
                 role_num = v2
                 break
-        text = _decode_message_text(value)
-        if text:
-            out.append((role_names.get(role_num, "user"), text))
+        role = role_names.get(role_num, "user")
+        if role == "tool":
+            for result in _decode_tool_results(value):
+                out.append(
+                    {
+                        "role": "tool",
+                        "content": result["content"],
+                        "tool_call_id": result["tool_call_id"],
+                        "tool_calls": [],
+                    }
+                )
+            continue
+        text = _decode_text_content(value)
+        tool_calls = _decode_tool_calls(value)
+        if text or tool_calls or role in {"user", "system"}:
+            out.append(
+                {
+                    "role": role,
+                    "content": text,
+                    "tool_call_id": None,
+                    "tool_calls": tool_calls,
+                }
+            )
     return out
+
+
+def _agent_tool_to_definition(tool: bytes) -> dict[str, Any] | None:
+    name = _field_string(tool, 1)
+    if not name:
+        return None
+    description = _field_string(tool, 2)
+    params_raw = _field_bytes(tool, 3)
+    parameters: dict[str, Any] = {"type": "object", "properties": {}}
+    if params_raw:
+        decoded = _decode_struct(params_raw)
+        if decoded:
+            parameters = dict(decoded)
+            if parameters.get("type") != "object":
+                parameters["type"] = "object"
+            if not isinstance(parameters.get("properties"), dict):
+                parameters["properties"] = {}
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        },
+    }
+
+
+def _decode_tools(request: bytes) -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = []
+    for field, wire, value in iter_fields(request):
+        if field != 2 or wire != 2 or not isinstance(value, bytes):
+            continue
+        tool = _agent_tool_to_definition(value)
+        if tool is not None:
+            tools.append(tool)
+    return tools
 
 
 def _decode_run_request(run_request: bytes) -> RunInferenceAppend:
@@ -125,12 +323,14 @@ def _decode_invoke_model(invoke: bytes) -> RunInferenceAppend:
         if requested:
             model_id = _decode_requested_model(requested)
     messages = _decode_core_messages(request)
+    tools = _decode_tools(request)
     return RunInferenceAppend(
         kind="invoke_model",
         conversation_id=_field_string(request, 8),
         model_id=model_id,
         invocation_id=invocation_id or _field_string(request, 6),
         messages=messages,
+        tools=tools,
     )
 
 
@@ -282,6 +482,30 @@ def encode_text_part(*, invocation_id: str, text: str, is_final: bool = False) -
     """RunInferenceServerMessage { invocation_response: { id, response: { text_part } } }."""
     text_part = encode_string(1, text) + encode_bool(2, is_final)
     response = encode_message_field(1, text_part)
+    body = encode_string(1, invocation_id) + encode_message_field(2, response)
+    return encode_message_field(3, body)
+
+
+def encode_tool_call_part(
+    *,
+    invocation_id: str,
+    tool_call_id: str,
+    tool_name: str,
+    args: dict[str, Any] | str,
+    is_complete: bool = True,
+    tool_index: int | None = None,
+) -> bytes:
+    """RunInferenceServerMessage { invocation_response: { response: { tool_call_part } } }."""
+    args_text = args if isinstance(args, str) else json.dumps(args, ensure_ascii=False)
+    part = (
+        encode_string(1, tool_call_id)
+        + encode_string(2, tool_name)
+        + encode_string(3, args_text)
+        + encode_bool(4, is_complete)
+    )
+    if tool_index is not None:
+        part += encode_int64(5, tool_index)
+    response = encode_message_field(2, part)
     body = encode_string(1, invocation_id) + encode_message_field(2, response)
     return encode_message_field(3, body)
 

@@ -26,8 +26,6 @@ from cursor_switch.adapters.cursor.proto_min import (
 )
 from cursor_switch.adapters.cursor.transport import TransportRoute
 from cursor_switch.control.deps import AppServices
-import logging
-from pathlib import Path
 
 logger = logging.getLogger("cursor_switch.agent_ws")
 
@@ -213,11 +211,61 @@ async def knowledge_remove(request: Request) -> Response:
 
 
 @router.post("/aiserver.v1.AiService/WriteGitCommitMessage")
-async def write_commit_message() -> Response:
+async def write_commit_message(request: Request) -> Response:
+    services = _services(request)
+    message = await _generate_commit_message(services)
     return Response(
-        content=json.dumps({"commitMessage": "chore: update"}).encode("utf-8"),
+        content=json.dumps({"commitMessage": message}).encode("utf-8"),
         media_type="application/json",
     )
+
+
+async def _generate_commit_message(services: AppServices) -> str:
+    from pathlib import Path
+
+    from cursor_switch.runtime.domain.types import Message, MessageRole, ModelEventKind
+    from cursor_switch.runtime.ports.model import ModelInvocation
+
+    prompt_path = (
+        Path(__file__).resolve().parents[2] / "prompt" / "cursor" / "commit" / "en-US.md"
+    )
+    system = (
+        prompt_path.read_text(encoding="utf-8")
+        if prompt_path.is_file()
+        else "Write a concise git commit message for the staged changes."
+    )
+    model_id = await services.settings.get_commit_model()
+    if not model_id:
+        rows = await services.models.list_models()
+        enabled = [row for row in rows if row.enabled]
+        model_id = enabled[0].id if enabled else ""
+    if not model_id:
+        return "chore: update"
+    await services.model_index.refresh()
+    # Prefer gateway model port (ProviderRouter) when available.
+    model = getattr(services.gateway, "_model", None)
+    if model is None:
+        return "chore: update"
+    parts: list[str] = []
+    async for event in model.stream(
+        ModelInvocation(
+            model_id=model_id,
+            messages=[
+                Message(id="sys", role=MessageRole.SYSTEM, content=system),
+                Message(
+                    id="user",
+                    role=MessageRole.USER,
+                    content="Generate a commit message for the current changes.",
+                ),
+            ],
+        )
+    ):
+        if event.kind is ModelEventKind.TEXT_DELTA and event.text:
+            parts.append(event.text)
+        if event.kind is ModelEventKind.ERROR:
+            return "chore: update"
+    text = "".join(parts).strip()
+    return text.splitlines()[0].strip() if text else "chore: update"
 
 
 @router.post("/aiserver.v1.BidiService/BidiAppend")

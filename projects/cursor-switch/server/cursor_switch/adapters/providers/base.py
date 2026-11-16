@@ -26,6 +26,11 @@ RESERVED_BODY_KEYS = frozenset(
 )
 
 
+def default_httpx_timeout() -> httpx.Timeout:
+    """Agent turns (thinking + large tool history) need long read timeouts."""
+    return httpx.Timeout(connect=30.0, read=300.0, write=60.0, pool=30.0)
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderConfig:
     provider_type: str

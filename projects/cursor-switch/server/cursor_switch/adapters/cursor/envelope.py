@@ -7,8 +7,9 @@ Tests may also send hex-encoded JSON of ClientAppend.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 from cursor_switch.adapters.cursor.proto_min import iter_fields
 
@@ -48,6 +49,9 @@ class ClientAppend:
     target_run_id: str | None = None
     invocation_id: str = ""
     protocol: str = "agent"  # agent | run_inference
+    # RunInference invoke payload: {role, content, tool_call_id?, tool_calls?}
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    tools: list[dict[str, Any]] = field(default_factory=list)
 
     def to_json_bytes(self) -> bytes:
         return json.dumps(
@@ -62,6 +66,8 @@ class ClientAppend:
                 "target_run_id": self.target_run_id,
                 "invocation_id": self.invocation_id,
                 "protocol": self.protocol,
+                "messages": self.messages,
+                "tools": self.tools,
             },
             separators=(",", ":"),
         ).encode("utf-8")
@@ -124,12 +130,13 @@ def _decode_conversation_action(
             continue
         action = mapped
         if field == 1:  # UserMessageAction
-            text = _extract_user_text(value)
-            # Newer Cursor may put text in text_blob_id (field 18) instead of text.
+            from cursor_switch.adapters.cursor.compile.context import (
+                extract_user_text_with_blobs,
+            )
+
+            text = extract_user_text_with_blobs(value)
             if not text:
-                user_message = _field_bytes(value, 1) or b""
-                if _field_bytes(user_message, 18):
-                    text = ""  # blob-backed; still treat as user_message
+                text = _extract_user_text(value)
         break
     return ClientAppend(
         request_id=request_id,
@@ -196,8 +203,16 @@ def _decode_run_inference_as_append(
         )
     if item.kind == "invoke_model":
         # Prefer last user message; fall back to concatenated user texts.
-        user_texts = [t for role, t in item.messages if role == "user"]
-        text = user_texts[-1] if user_texts else "\n".join(t for _, t in item.messages)
+        user_texts = [
+            str(msg.get("content") or "")
+            for msg in item.messages
+            if msg.get("role") == "user" and msg.get("content")
+        ]
+        text = (
+            user_texts[-1]
+            if user_texts
+            else "\n".join(str(msg.get("content") or "") for msg in item.messages)
+        )
         return ClientAppend(
             request_id=request_id,
             seqno=seqno,
@@ -208,6 +223,8 @@ def _decode_run_inference_as_append(
             command_id=f"cmd-{request_id}-{seqno}",
             invocation_id=item.invocation_id,
             protocol="run_inference",
+            messages=list(item.messages),
+            tools=list(item.tools),
         )
     if item.kind == "finish_run":
         return ClientAppend(

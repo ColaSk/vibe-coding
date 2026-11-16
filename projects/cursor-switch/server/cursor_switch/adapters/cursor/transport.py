@@ -137,38 +137,27 @@ class TransportRegistry(TransportPort):
         await handle.set_route(TransportRoute.UPSTREAM)
         return handle
 
+    async def publish_agent_message(self, request_id: str, message: object) -> None:
+        """Publish a serialized AgentServerMessage (or any protobuf Message)."""
+        handle = await self.get_or_create(request_id)
+        if handle.protocol == "run_inference":
+            return
+        serialize = getattr(message, "SerializeToString", None)
+        if serialize is None:
+            raise TypeError("publish_agent_message expects a protobuf Message")
+        await handle.publish_payload(serialize())
+
     async def publish(self, request_id: str, event: ModelEvent) -> None:
         handle = await self.get_or_create(request_id)
         if handle.protocol == "run_inference":
             # RunInference streaming is driven by gateway.invoke path.
             return
-        # Until full AgentServerMessage codec lands, publish JSON ModelEvent frames.
-        import json
+        from cursor_switch.adapters.cursor.protocol.events import from_model_event
 
-        payload = json.dumps(
-            {
-                "kind": event.kind.value,
-                "text": event.text,
-                "error": event.error,
-                "tool_call": None
-                if event.tool_call is None
-                else {
-                    "id": event.tool_call.id,
-                    "name": event.tool_call.name,
-                    "arguments": event.tool_call.arguments,
-                },
-                "usage": None
-                if event.usage is None
-                else {
-                    "input_tokens": event.usage.input_tokens,
-                    "output_tokens": event.usage.output_tokens,
-                    "cache_read_tokens": event.usage.cache_read_tokens,
-                    "cache_write_tokens": event.usage.cache_write_tokens,
-                },
-            },
-            separators=(",", ":"),
-        ).encode("utf-8")
-        await handle.publish_payload(payload)
+        message = from_model_event(event, model_call_id=handle.model_id or "")
+        if message is None:
+            return
+        await handle.publish_payload(message.SerializeToString())
 
     async def ensure_run_ready(self, request_id: str) -> None:
         from cursor_switch.adapters.cursor.run_inference import encode_run_ready

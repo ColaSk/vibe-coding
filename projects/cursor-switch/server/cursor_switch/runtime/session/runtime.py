@@ -38,13 +38,18 @@ class ConversationRuntime:
         tools: ToolPort,
         checkpoints: CheckpointPort,
         model_id: str,
+        tool_definitions: list[dict] | None = None,
+        system_prompt: str = "",
+        initial_messages: list[Message] | None = None,
     ) -> None:
         self.conversation_id = conversation_id
         self._model = model
         self._tools = tools
         self._checkpoints = checkpoints
         self._model_id = model_id
-        self._messages: list[Message] = []
+        self._tool_definitions = list(tool_definitions or [])
+        self._system_prompt = system_prompt
+        self._messages: list[Message] = list(initial_messages or [])
         self._phase = RunPhase.ENDED
         self._current_run_id: RunId | None = None
         self._seen_commands: set[str] = set()
@@ -53,6 +58,12 @@ class ConversationRuntime:
         self._cancel_requested = False
         self._lock = asyncio.Lock()
         self._run_task: asyncio.Task[None] | None = None
+
+    def set_tool_definitions(self, tools: list[dict]) -> None:
+        self._tool_definitions = list(tools)
+
+    def set_system_prompt(self, prompt: str) -> None:
+        self._system_prompt = prompt
 
     @property
     def phase(self) -> RunPhase:
@@ -143,8 +154,18 @@ class ConversationRuntime:
     async def _model_cycle(self) -> None:
         tool_calls: list[ToolCall] = []
         text_parts: list[str] = []
+        messages = list(self._messages)
+        if self._system_prompt and not any(m.role is MessageRole.SYSTEM for m in messages):
+            messages = [
+                Message(id=new_id("sys"), role=MessageRole.SYSTEM, content=self._system_prompt),
+                *messages,
+            ]
         async for event in self._model.stream(
-            ModelInvocation(model_id=self._model_id, messages=list(self._messages))
+            ModelInvocation(
+                model_id=self._model_id,
+                messages=messages,
+                tools=list(self._tool_definitions),
+            )
         ):
             if self._break_requested or self._cancel_requested:
                 break

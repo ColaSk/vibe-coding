@@ -66,10 +66,12 @@ def iter_fields(data: bytes) -> list[tuple[int, int, bytes | int]]:
         if wire == 0:
             value, offset = _decode_varint(data, offset)
             fields.append((field, wire, value))
-        elif wire == 1:  # 64-bit
-            offset += 8
-            if offset > len(data):
+        elif wire == 1:  # 64-bit (e.g. protobuf Value.number_value)
+            end = offset + 8
+            if end > len(data):
                 raise ValueError("truncated fixed64 field")
+            fields.append((field, wire, data[offset:end]))
+            offset = end
         elif wire == 2:
             length, offset = _decode_varint(data, offset)
             end = offset + length
@@ -78,9 +80,11 @@ def iter_fields(data: bytes) -> list[tuple[int, int, bytes | int]]:
             fields.append((field, wire, data[offset:end]))
             offset = end
         elif wire == 5:  # 32-bit
-            offset += 4
-            if offset > len(data):
+            end = offset + 4
+            if end > len(data):
                 raise ValueError("truncated fixed32 field")
+            fields.append((field, wire, data[offset:end]))
+            offset = end
         else:
             raise ValueError(f"unsupported wire type {wire}")
     return fields
