@@ -20,6 +20,7 @@ from cursor_switch.adapters.local_access.routing import (
     should_route_locally,
     upstream_url,
 )
+from cursor_switch.adapters.local_access.server_config import ServerConfigGate
 
 
 logger = logging.getLogger("cursor_switch.proxy")
@@ -74,6 +75,7 @@ class CursorProxy:
         self._traffic_lock = Lock()
         self.tab_mode = "direct"
         self.tab_address = ""
+        self._server_config = ServerConfigGate()
 
     @property
     def status(self) -> ProxyStatus:
@@ -575,6 +577,8 @@ class CursorProxy:
                     return True, status_code
 
                 payload = await response.aread()
+                if path_only.endswith("GetServerConfig") and status_code == 200 and payload:
+                    payload = self._server_config.response(payload)
                 head = (
                     status_line
                     + response_headers

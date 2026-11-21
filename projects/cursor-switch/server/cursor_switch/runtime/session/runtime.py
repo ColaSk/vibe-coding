@@ -26,6 +26,10 @@ from cursor_switch.runtime.session.commands import (
     ToolResultCommand,
 )
 
+# One user turn can need many tool rounds. The cap only stops a model that
+# never finishes; a normal task must not end after the first tool batch.
+_MAX_MODEL_CYCLES = 32
+
 
 class ConversationRuntime:
     """Owns one conversation and at most one current run."""
@@ -130,10 +134,12 @@ class ConversationRuntime:
 
     async def _run_loop(self) -> None:
         try:
+            cycles = 0
             while self._phase is RunPhase.RUNNING:
                 if self._cancel_requested:
                     break
-                await self._model_cycle()
+                cycles += 1
+                continued = await self._model_cycle()
                 if self._cancel_requested:
                     break
                 if self._pending_inserts:
@@ -141,6 +147,18 @@ class ConversationRuntime:
                     self._pending_inserts.clear()
                     self._break_requested = False
                     continue
+                # A tool result is input for the next model turn. Stopping here
+                # ends the agent task after the first tool batch.
+                if continued and cycles < _MAX_MODEL_CYCLES:
+                    continue
+                if continued:
+                    self._messages.append(
+                        Message(
+                            id=new_id("msg"),
+                            role=MessageRole.ASSISTANT,
+                            content="stopped: model cycle limit reached",
+                        )
+                    )
                 break
         finally:
             async with self._lock:
@@ -151,7 +169,7 @@ class ConversationRuntime:
                 self._current_run_id = None
                 self._run_task = None
 
-    async def _model_cycle(self) -> None:
+    async def _model_cycle(self) -> bool:
         tool_calls: list[ToolCall] = []
         text_parts: list[str] = []
         messages = list(self._messages)
@@ -181,7 +199,7 @@ class ConversationRuntime:
                         content=event.error or "model error",
                     )
                 )
-                return
+                return False
             elif event.kind is ModelEventKind.END:
                 break
 
@@ -194,6 +212,7 @@ class ConversationRuntime:
                 )
             )
 
+        executed = False
         for call in tool_calls:
             if self._break_requested or self._cancel_requested:
                 self._messages.append(
@@ -207,6 +226,7 @@ class ConversationRuntime:
                 continue
             handle = await self._tools.dispatch(call)
             result = await handle.result()
+            executed = True
             self._messages.append(
                 Message(
                     id=new_id("msg"),
@@ -215,6 +235,7 @@ class ConversationRuntime:
                     tool_call_id=result.tool_call_id,
                 )
             )
+        return executed and not self._cancel_requested and not self._break_requested
 
     async def wait_until_idle(self) -> None:
         task = self._run_task

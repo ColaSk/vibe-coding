@@ -18,6 +18,31 @@ def _assistant_call(name: str, **args: object) -> Message:
     )
 
 
+def test_reject_tool_call_blocks_unadvertised_and_missing_required() -> None:
+    from cursor_switch.adapters.cursor.run_inference_guard import (
+        reject_tool_call,
+        tool_parameter_schemas,
+    )
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "Read",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+        }
+    ]
+    schemas = tool_parameter_schemas(tools)
+    assert reject_tool_call(ToolCall(id="1", name="Await", arguments={}), schemas)
+    assert reject_tool_call(ToolCall(id="2", name="Read", arguments={}), schemas)
+    assert reject_tool_call(ToolCall(id="3", name="Read", arguments={"path": "a"}), schemas) is None
+
+
 def test_repeated_tool_loop_detects_identical_calls() -> None:
     messages = [
         Message(id="u", role=MessageRole.USER, content="read readme"),
@@ -29,6 +54,8 @@ def test_repeated_tool_loop_detects_identical_calls() -> None:
     ]
     assert repeated_tool_loop(messages, threshold=3) is True
     assert repeated_tool_loop(messages[:4], threshold=3) is False
+    resent = [*messages, Message(id="again", role=MessageRole.USER, content="retry")]
+    assert repeated_tool_loop(resent, threshold=3) is False
 
 
 def test_empty_tool_result_streak() -> None:
@@ -40,6 +67,18 @@ def test_empty_tool_result_streak() -> None:
     assert empty_tool_result_streak(messages, threshold=3) is True
     messages[-1] = Message(id="t3", role=MessageRole.TOOL, content="ok", tool_call_id="c")
     assert empty_tool_result_streak(messages, threshold=3) is False
+
+
+def test_compact_tool_history_shrinks_old_results() -> None:
+    from cursor_switch.adapters.cursor.run_inference_guard import compact_tool_history
+
+    messages = [
+        Message(id=f"t{i}", role=MessageRole.TOOL, content="x" * 4000, tool_call_id=str(i))
+        for i in range(6)
+    ]
+    compacted = compact_tool_history(messages, keep_recent=2, limit=200)
+    assert len(compacted[0].content) < 4000
+    assert len(compacted[-1].content) == 4000
 
 
 def test_truncate_message_content_caps_tool_blobs() -> None:

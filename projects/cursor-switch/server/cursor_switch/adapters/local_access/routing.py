@@ -16,8 +16,9 @@ LOCAL_PATHS = frozenset(
         "/aiserver.v1.DashboardService/GetEffectiveUserPlugins",
         "/aiserver.v1.DashboardService/GetUserPrivacyMode",
         "/agent.v1.AgentService/UpdateConversationMetadata",
-        "/aiserver.v1.AiService/GetServerConfig",
-        "/aiserver.v1.ServerConfigService/GetServerConfig",
+        # GetServerConfig must stay upstream. A local JSON stub is not the
+        # protobuf the client expects, and a changed agent URL restarts the
+        # extension host and aborts the running task.
         "/aiserver.v1.AiService/AvailableModels",
         "/agent.v1.AgentService/GetUsableModels",
         "/aiserver.v1.AiService/GetUsableModels",

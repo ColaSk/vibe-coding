@@ -149,6 +149,24 @@ def enrich_tools_with_catalog(
     return out
 
 
+def drop_schemaless_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop tools whose parameter schema is still empty after enrichment.
+
+    Cursor advertises some tools (Await, …) with an empty protobuf Struct.
+    The model then emits args={}, and the client aborts the agent websocket.
+    """
+    kept: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function = _tool_function(tool)
+        if function is None:
+            continue
+        if _parameters_properties(function.get("parameters")):
+            kept.append(tool)
+    return kept
+
+
 class PromptCompiler:
     def __init__(self, root: Path | None = None) -> None:
         self._root = root or _assets_root()

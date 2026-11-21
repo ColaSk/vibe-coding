@@ -60,8 +60,14 @@ def test_enrich_tools_fills_empty_client_schemas() -> None:
     }
     assert "path" in (by_name["Read"].get("properties") or {})
     assert "glob_pattern" in (by_name["Glob"].get("properties") or {})
-    # Unknown tools stay as-is (still empty).
+    # Unknown tools stay empty until the caller drops them.
     assert (by_name["CustomThing"].get("properties") or {}) == {}
+    from cursor_switch.adapters.cursor.prompting.compiler import drop_schemaless_tools
+
+    dropped = drop_schemaless_tools(enriched)
+    names = [(t.get("function") or {}).get("name") for t in dropped]
+    assert "CustomThing" not in names
+    assert "Read" in names
 
 
 def test_enrich_tools_keeps_nonempty_client_schemas() -> None:

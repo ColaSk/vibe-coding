@@ -247,8 +247,12 @@ class CursorGateway:
             self._close_tasks[append.request_id] = asyncio.create_task(_finalize())
 
     async def _dispatch_run_inference(self, append: ClientAppend) -> None:
-        from cursor_switch.adapters.cursor.prompting.compiler import enrich_tools_with_catalog
+        from cursor_switch.adapters.cursor.prompting.compiler import (
+            drop_schemaless_tools,
+            enrich_tools_with_catalog,
+        )
         from cursor_switch.adapters.cursor.run_inference import (
+            encode_heartbeat,
             encode_invocation_end,
             encode_text_part,
             encode_tool_call_part,
@@ -256,9 +260,12 @@ class CursorGateway:
         from cursor_switch.adapters.cursor.run_inference_guard import (
             DEFAULT_TOOL_CONTENT_LIMIT,
             DEFAULT_USER_CONTENT_LIMIT,
+            compact_tool_history,
             empty_tool_result_streak,
             history_summary,
+            reject_tool_call,
             repeated_tool_loop,
+            tool_parameter_schemas,
             truncate_message_content,
         )
         from cursor_switch.runtime.domain.types import Message, MessageRole, ToolCall
@@ -338,7 +345,7 @@ class CursorGateway:
         tools = list(append.tools) if append.tools else list(self._tool_defs)
         if append.tools:
             # Full tools.json — not mode allow-list — so CreatePlan/AskQuestion/etc. get schemas.
-            tools = enrich_tools_with_catalog(tools)
+            tools = drop_schemaless_tools(enrich_tools_with_catalog(tools))
 
         disable_tools = repeated_tool_loop(messages) or empty_tool_result_streak(messages)
         if disable_tools:
@@ -379,54 +386,122 @@ class CursorGateway:
             len(messages),
             history_summary(messages)[-8:],
         )
+        messages = compact_tool_history(messages)
+        schemas = tool_parameter_schemas(tools)
         invocation = ModelInvocation(
             model_id=model_id,
             messages=messages,
             tools=tools,
         )
+        beat_task: asyncio.Task[None] | None = None
         try:
             tool_index = 0
             emitted_text = False
-            async for event in self._model.stream(invocation):
-                if event.kind is ModelEventKind.TEXT_DELTA and event.text:
+            sent_final = False
+
+            async def _heartbeat() -> None:
+                while True:
+                    await asyncio.sleep(4)
+                    await handle.publish_payload(encode_heartbeat())
+
+            beat_task = asyncio.create_task(_heartbeat())
+            # A bad tool call aborts Cursor's websocket. Repair it here and ask
+            # the model again before anything is published to the client.
+            for _attempt in range(3):
+                text_parts: list[str] = []
+                calls: list[ToolCall] = []
+                model_error = ""
+                async for event in self._model.stream(invocation):
+                    if event.kind is ModelEventKind.TEXT_DELTA and event.text:
+                        text_parts.append(event.text)
+                    elif event.kind is ModelEventKind.TOOL_CALL and event.tool_call is not None:
+                        calls.append(event.tool_call)
+                    elif event.kind is ModelEventKind.ERROR:
+                        model_error = event.error or "model error"
+                        break
+                if model_error:
+                    logger.warning("run_inference model error: %s", model_error)
                     emitted_text = True
                     await handle.publish_payload(
                         encode_text_part(
                             invocation_id=invocation_id,
-                            text=event.text,
+                            text=f"模型调用失败：{model_error}",
                             is_final=False,
                         )
                     )
-                elif event.kind is ModelEventKind.TOOL_CALL and event.tool_call is not None:
-                    call = event.tool_call
-                    logger.info(
-                        "run_inference tool_call id=%s name=%s args=%s",
-                        call.id,
-                        call.name,
-                        call.arguments,
+                    calls = []
+                    break
+                rejected = [(call, reject_tool_call(call, schemas)) for call in calls]
+                rejected = [(call, reason) for call, reason in rejected if reason]
+                if not rejected:
+                    if text_parts:
+                        emitted_text = True
+                        # A text-only answer must be final. A later empty
+                        # is_final part does not close the step that holds the text.
+                        answer_is_final = not calls
+                        sent_final = answer_is_final
+                        await handle.publish_payload(
+                            encode_text_part(
+                                invocation_id=invocation_id,
+                                text="".join(text_parts),
+                                is_final=answer_is_final,
+                            )
+                        )
+                    for call in calls:
+                        logger.info(
+                            "run_inference tool_call id=%s name=%s args=%s",
+                            call.id,
+                            call.name,
+                            call.arguments,
+                        )
+                        await handle.publish_payload(
+                            encode_tool_call_part(
+                                invocation_id=invocation_id,
+                                tool_call_id=call.id,
+                                tool_name=call.name,
+                                args=call.arguments,
+                                is_complete=True,
+                                tool_index=tool_index,
+                            )
+                        )
+                        tool_index += 1
+                    break
+                logger.warning(
+                    "run_inference withheld tool calls id=%s reasons=%s",
+                    invocation_id,
+                    [reason for _, reason in rejected],
+                )
+                messages.append(
+                    Message(
+                        id=f"repair-a-{invocation_id}-{tool_index}",
+                        role=MessageRole.ASSISTANT,
+                        content="".join(text_parts),
+                        tool_calls=tuple(call for call, _ in rejected),
                     )
-                    await handle.publish_payload(
-                        encode_tool_call_part(
-                            invocation_id=invocation_id,
+                )
+                for call, reason in rejected:
+                    messages.append(
+                        Message(
+                            id=f"repair-t-{call.id}",
+                            role=MessageRole.TOOL,
+                            content=reason,
                             tool_call_id=call.id,
-                            tool_name=call.name,
-                            args=call.arguments,
-                            is_complete=True,
-                            tool_index=tool_index,
                         )
                     )
-                    tool_index += 1
-                elif event.kind is ModelEventKind.ERROR:
-                    logger.warning("run_inference model error: %s", event.error)
-                    err_text = f"模型调用失败：{event.error}"
-                    emitted_text = True
-                    await handle.publish_payload(
-                        encode_text_part(
-                            invocation_id=invocation_id,
-                            text=err_text,
-                            is_final=False,
-                        )
+                invocation = ModelInvocation(
+                    model_id=model_id,
+                    messages=messages,
+                    tools=tools,
+                )
+            else:
+                emitted_text = True
+                await handle.publish_payload(
+                    encode_text_part(
+                        invocation_id=invocation_id,
+                        text="（工具调用不符合客户端声明，已停止这一轮，避免中断连接）",
+                        is_final=False,
                     )
+                )
             if not emitted_text and tool_index == 0:
                 await handle.publish_payload(
                     encode_text_part(
@@ -435,9 +510,10 @@ class CursorGateway:
                         is_final=False,
                     )
                 )
-            await handle.publish_payload(
-                encode_text_part(invocation_id=invocation_id, text="", is_final=True)
-            )
+            if not sent_final:
+                await handle.publish_payload(
+                    encode_text_part(invocation_id=invocation_id, text="", is_final=True)
+                )
             await handle.publish_payload(encode_invocation_end(invocation_id=invocation_id))
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_inference invoke failed: %s", exc)
@@ -452,6 +528,13 @@ class CursorGateway:
                 await handle.publish_payload(encode_invocation_end(invocation_id=invocation_id))
             except Exception:  # noqa: BLE001
                 await self.transport.close_error(append.request_id, str(exc))
+        finally:
+            if beat_task is not None:
+                beat_task.cancel()
+                try:
+                    await beat_task
+                except asyncio.CancelledError:
+                    pass
 
 
     async def _bind_tool_publish(self, request_id: str, conversation_id: str) -> None:

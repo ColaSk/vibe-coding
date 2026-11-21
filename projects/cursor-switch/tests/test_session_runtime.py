@@ -121,3 +121,33 @@ async def test_tool_call_is_dispatched() -> None:
     await runtime.handle(InsertMessages(messages=[_user("run")], command_id="t"))
     await runtime.wait_until_idle()
     assert any(m.tool_call_id == "t1" for m in runtime.messages)
+
+
+async def test_tool_result_starts_another_model_cycle() -> None:
+    model = FakeModel(
+        [
+            [
+                ModelEvent(
+                    kind=ModelEventKind.TOOL_CALL,
+                    tool_call=ToolCall(id="t1", name="Read", arguments={"path": "a"}),
+                ),
+                ModelEvent(kind=ModelEventKind.END),
+            ],
+            [
+                ModelEvent(kind=ModelEventKind.TEXT_DELTA, text="done"),
+                ModelEvent(kind=ModelEventKind.END),
+            ],
+        ]
+    )
+    registry = ConversationRegistry(
+        model=model,
+        tools=FakeTools(),
+        checkpoints=FakeCheckpoints(),
+        model_id="fake",
+    )
+    runtime = registry.get_or_create("c6")
+    await runtime.handle(InsertMessages(messages=[_user("read a")], command_id="loop"))
+    await runtime.wait_until_idle()
+    assert model.calls == 2
+    assert any(m.content == "done" for m in runtime.messages)
+    assert any(m.tool_call_id == "t1" for m in runtime.messages)

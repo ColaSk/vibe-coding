@@ -32,6 +32,23 @@ def test_cursor_host_and_local_routing() -> None:
     assert should_route_locally("/aiserver.v1.NetworkService/IsConnected")
     assert should_route_locally("/aiserver.v1.BidiService/BidiAppend")
     assert not should_route_locally("/aiserver.v1.AiService/StreamCpp")
+    assert not should_route_locally("/aiserver.v1.AiService/GetServerConfig")
+
+
+def test_server_config_gate_returns_one_pinned_body() -> None:
+    from cursor_switch.adapters.local_access.server_config import ServerConfigGate
+
+    old = b"agentn.global.api5.cursor.sh"
+    new = b"agentn.api5.cursor.sh"
+    message = bytes([len(old)]) + old + b"tail"
+    frame = b"\x00" + len(message).to_bytes(4, "big") + message
+    gate = ServerConfigGate()
+    first = gate.response(frame)
+    second = gate.response(b"\x00" + (4).to_bytes(4, "big") + b"other")
+    assert first == second
+    assert b"agentn.global" not in first
+    assert new in first
+    assert int.from_bytes(first[1:5], "big") == len(first) - 5
     assert not should_route_locally("/unknown")
 
 
